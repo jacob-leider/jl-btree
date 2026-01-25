@@ -325,33 +325,15 @@ success:
 }
 
 
-// INSERT
 
-// @brief Splits an internal node in half. 
-// 
-// TODO: Reword the details.
+// TODO
 //
-// @details The insertion of `last_key` and `old_rsib` into `node` is pending. 
-// `node` must first be split. This function splits `node` into `node` (left)
-// and `rsib` (right) at separation key `next_key`; determines which sibling, 
-// `node` or `rsib`, to insert `last_key` and `old_rsib` into; and inserts the 
-// key-child pair into that sibling.
 //
-// @par Assumptions
-//    - `node` is full
-//
-// @param node node being split
-// @param rsib_ptr pointer to the right half after split
-// @param old_rsib inserted into `node` or the (right) sibling created by this 
-// function along with `last_key`
-// @param last_key inserted into `node` or the (right) sibling created by this 
-// function along with `old_rsib`
-// @param next_key_ptr pointer to the key which `node` is separated at
-//
-// @return an error code
-//    - 0: Error
-//    - 1: OK
-int btree_node_split(BTreeNode* node, BTreeNode** rsib_ptr, BTreeNode* old_rsib, int last_key, int* next_key_ptr) {
+// @param[in] node the node being split
+// @param[out] rsib the second node `node` is split into
+// @param[in] par parent of `node` (perhaps unnecessary)
+// @paran[out] next_key_ptr points to the key `node` was split at
+int btree_node_split_2(BTreeNode* node, BTreeNode** rsib_ptr, BTreeNode* par, int* next_key_ptr) {
   const int size = node->node_size;
   const int l_start = size / 2;
   const int r_start = l_start + 1;
@@ -365,17 +347,12 @@ int btree_node_split(BTreeNode* node, BTreeNode** rsib_ptr, BTreeNode* old_rsib,
   node->curr_size = l_start;
   rsib->curr_size = size - r_start;
 
+  rsib->subtree_size = rsib->curr_size;
+
   memcpy(rsib->keys, node->keys + r_start, rsib->curr_size * sizeof(int));
 #ifdef btree_keep_unused_mem_clean
   memset(node->keys + l_start, 0, (size - l_start) * sizeof(int));
 #endif
-
-  rsib->subtree_size = rsib->curr_size;
-  if (last_key > next_key) {
-    rsib->subtree_size += 1;
-    if (old_rsib != NULL)
-      rsib->subtree_size += old_rsib->subtree_size;
-  }
 
   if (!btree_node_is_leaf(node)) {
     for (int i = 0; i <= rsib->curr_size; i++) {
@@ -396,23 +373,6 @@ int btree_node_split(BTreeNode* node, BTreeNode** rsib_ptr, BTreeNode* old_rsib,
   return 1;
 }
 
-// @brief create a root (internal) node with one key `sep_key` and two children 
-// `lsib` and `rsib`
-static int btree_node_make_new_root(BTreeNode* lsib, BTreeNode* rsib, int sep_key, BTreeNode** new_root_ptr) {
-  BTreeNode* new_root;
-  if (!btree_node_init(lsib->node_size, &new_root, 1)) {
-    printf("Error adding value to tree (Line %d)\n", __LINE__);
-    return 0;
-  }
-
-  btree_node_set_first_key(new_root, sep_key);
-  //btree_node_set_first_child(new_root, lsib);
-  btree_node_set_child(new_root, 1, rsib);
-
-  new_root->curr_size = 1;
-
-  return 1;
-}
 
 // @brief Adds a value to the tree assuming the value should be inserted into 
 // `leaf`. If the tree already contains this value, nothing is added to the 
@@ -458,42 +418,47 @@ int btree_node_insert_impl(BTreeNode* root, int val, BTreeNode** new_root_ptr) {
                                     &num_full_ancestors, inc_subtree_sizes))
     return 0;
 
-  // Split, maybe propagate
-  int next_val = 0;
-  BTreeNode* lpar = ptr;
-  BTreeNode* rpar = NULL;
-  BTreeNode* lsib = NULL;
-  BTreeNode* rsib = NULL;
-
-  for (; num_full_ancestors > 0; num_full_ancestors -= 1) {
-    // Split lsib's parent and add `rsib` to the half whose range contains `val`
-    if (!btree_node_split(lpar, &rpar, rsib, val, &next_val))
-      return 0;
-
-    btree_node_insert_key_and_child_assuming_not_full(val < next_val ? lpar : rpar, val, rsib);
-
-
-
-    val = next_val;
-    lsib = lpar;
-    rsib = rpar;
-    btree_node_ascend(lpar);
-  }
-
-  if (lpar == NULL) { 
+  if (last_nonfull_anc == NULL) {
     // If parent doesnt exist, create a new node containing just `val` with
     // first child `lsib` and second child `rsib`. This new node will become
     // The root of the tree.
-    if (!btree_node_init(lsib->node_size, new_root_ptr, 1))
+    if (!btree_node_init(ptr->node_size, new_root_ptr, 1))
       return 0;
 
-    lpar = *new_root_ptr;
-    btree_node_set_first_child(lpar, lsib);
-    lpar->subtree_size += lsib->subtree_size + rsib->subtree_size + 1;
+    ptr = *new_root_ptr;
+    btree_node_set_first_child(ptr, root);
+    ptr->subtree_size = root->subtree_size;
+  }
+  else {
+    ptr = last_nonfull_anc;
   }
 
-  btree_node_insert_key_and_child_assuming_not_full(lpar, val, rsib);
-  
+  for (; num_full_ancestors > 0; num_full_ancestors -= 1) {
+    // Get child B of A where `val` will be inserted
+    BTreeNode* lchild = btree_node_get_child(ptr, find_idx_of_min_key_greater_than_val(ptr, val));
+    BTreeNode* rchild = NULL;
+
+    // Split B into B1, B2, k (B1: lchild, B2: rchild, k: sep_key)
+    int sep_key = 0;
+    if (!btree_node_split_2(lchild, &rchild, ptr, &sep_key))
+      return 0;
+
+    // Insert (k, B2) into A
+    btree_node_insert_key_and_child_assuming_not_full(ptr, sep_key, rchild);
+
+    // Descend. Since we're doing this top-down, we can unlock `ptr` once we
+    // descend.
+    if (val < sep_key) {
+      ptr = lchild;
+    }
+    else {
+      lchild->subtree_size -= 1;
+      rchild->subtree_size += 1;
+      ptr = rchild;
+    }
+  }
+
+  btree_node_insert_key_and_child_assuming_not_full(ptr, val, NULL);
 
   return 1;
 }
