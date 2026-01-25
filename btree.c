@@ -309,9 +309,14 @@ success:
 }
 
 
-// @brief TODO
+// @brief Splits a node (subroutine for `btree_node_insert_impl`)
 //
-// @detals TODO
+// @detals `key` is being inserted into the subtree rooted at `node`. This 
+// function splits `node`, storing the right half in the node `rsib_ptr` points
+// to and the separation key in `next_key_ptr`.
+//
+// @par Assumptions
+//    - `node` is full
 //
 // @param[in] node Node being split
 // @param[out] rsib Second (right) node `node` is split into
@@ -319,7 +324,7 @@ success:
 // @paran[in] key Key we're inserting into the tree
 //
 // @return A return code
-//    - 0: Error
+//    - 0: Error (OOM)
 //    - 1: OK
 int btree_node_split(BTreeNode* node, BTreeNode** rsib_ptr, int* next_key_ptr, int key) {
   const int size = node->node_size;
@@ -369,7 +374,7 @@ int btree_node_split(BTreeNode* node, BTreeNode** rsib_ptr, int* next_key_ptr, i
 //
 // @details TODO
 //
-// The algorithm is described below:
+// The insertion algorithm is described below:
 //
 //    1. Find the leaf L whose range contains `key`.
 //    2. Find the first ancestor A of L that is not full, or create one if all 
