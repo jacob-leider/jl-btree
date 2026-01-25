@@ -132,8 +132,6 @@ int btree_node_contains_key(BTreeNode* root, int key) {
 //
 // @param[in] root root of the tree
 // @param[in] key key we're finding
-// @param[out] leaf_ptr pointer to the leaf `leaf` of `root` whose range contains 
-// `key`.
 // @param[out] last_nonfull_anc_ptr pointer to the last non-full ancestor of `leaf`
 // (including `leaf`)
 // consecutive ancestors starting at `leaf` (including `leaf`) that are full 
@@ -145,10 +143,9 @@ int btree_node_contains_key(BTreeNode* root, int key) {
 //    - 0: Error
 //    - 1: (success) Didn't find `key`: `node_ptr` points to the leaf where 
 //    `key` should be inserted
-int btree_node_find_leaf_for_key(
+int btree_node_find_closest_nonfull_anc(
   BTreeNode* root,
   int key,
-  BTreeNode** leaf_ptr,
   BTreeNode** last_nonfull_anc_ptr,
   int inc_subtree_sizes)
 {
@@ -200,7 +197,6 @@ int btree_node_find_leaf_for_key(
     goto found_key;
 
 success:
-  *leaf_ptr = ptr;
   *last_nonfull_anc_ptr = last_nonfull_anc;
   return 1;
 
@@ -313,7 +309,6 @@ success:
 }
 
 
-
 // @brief TODO
 //
 // @detals TODO
@@ -360,12 +355,11 @@ int btree_node_split(BTreeNode* node, BTreeNode** rsib_ptr, int* next_key_ptr, i
 
   // `node`'s subtree_size was incremented when we searched for the leaf. If 
   // we're inserting `key` into `rsib`, we have to undo this. 
-  if (key > next_key) {
+  if (key > *next_key_ptr) {
     rsib->subtree_size += 1;
   }
 
-  node->subtree_size -= rsib->subtree_size 
-    + 1; // key we're splitting at
+  node->subtree_size -= rsib->subtree_size + 1; // +1 for separation key
 
   return 1;
 }
@@ -407,28 +401,22 @@ int btree_node_insert_impl(BTreeNode* root, int key, BTreeNode** new_root_ptr) {
   // Default: root doesn't change
   *new_root_ptr = root;
 
-  // TODO: What if someone else inserts the key here?
-
   BTreeNode* a = NULL;
-  BTreeNode* last_nonfull_anc = NULL;
-  if (!btree_node_find_leaf_for_key(root, key, &a, &last_nonfull_anc, 1))
+  if (!btree_node_find_closest_nonfull_anc(root, key, &a, 1))
     return 0;
 
-  if (last_nonfull_anc == NULL) {
-    // If all ancestors are full, create a new node containing just `root`.
-    if (!btree_node_init(a->node_size, &a, 1))
+  if (a == NULL) {
+    // Create a new node containing just `root` since all ancestors are full
+    if (!btree_node_init(root->node_size, &a, 1))
       return 0;
 
     btree_node_set_first_child(a, root);
     a->subtree_size = root->subtree_size;
     *new_root_ptr = a;
   }
-  else {
-    a = last_nonfull_anc;
-  }
 
   while (!btree_node_is_leaf(a)) {
-    // Get child B of A where `key` will be inserted
+    // Get child B of A whose range contains `key`
     BTreeNode* b1 = btree_node_get_child(a, find_idx_of_min_key_greater_than_val(a, key));
     BTreeNode* b2 = NULL;
 
@@ -440,10 +428,8 @@ int btree_node_insert_impl(BTreeNode* root, int key, BTreeNode** new_root_ptr) {
     // Insert (k, B2) into A
     btree_node_insert_key_and_child_assuming_not_full(a, k, b2);
 
-    // Descend. 
+    // Descend
     a = key < k ? b1 : b2;
-
-    // TODO: Since we're going top-down, we can unlock `ptr` once we descend.
   }
 
   btree_node_insert_key_and_child_assuming_not_full(a, key, NULL);
