@@ -335,7 +335,8 @@ int btree_node_split(BTreeNode* node, BTreeNode** rsib_ptr, int* next_key_ptr, i
   if (!btree_node_init(size, &rsib, node->children != NULL))
     return 0;
 
-  const int next_key = btree_node_get_key(node, l_start);
+  *rsib_ptr = rsib;
+  *next_key_ptr = btree_node_get_key(node, l_start);
 
   node->curr_size = l_start;
   rsib->curr_size = size - r_start;
@@ -365,9 +366,6 @@ int btree_node_split(BTreeNode* node, BTreeNode** rsib_ptr, int* next_key_ptr, i
 
   node->subtree_size -= rsib->subtree_size 
     + 1; // key we're splitting at
-
-  *rsib_ptr = rsib;
-  *next_key_ptr = next_key;
 
   return 1;
 }
