@@ -58,14 +58,19 @@
 ///    btree_node_intl_...
 
 
-// GENERAL
+////////////////////////////////////////////////////////////////////////////////
+// GENERAL                                                                    //
+////////////////////////////////////////////////////////////////////////////////
 
-// @brief Recursively frees all memory referenced by this node assuming all 
-// children are uninitialized
-//
-// TODO: This should't be recursive
-//
-// @param node
+
+/**
+ * @brief Recursively frees all memory referenced by this node assuming all 
+ * children are uninitialized
+ *
+ * TODO: This should't be recursive
+ *
+ * @param node
+ */
 void btree_subtree_kill(BTreeNode* node) {
   if (node == NULL)
     return;
@@ -79,14 +84,20 @@ void btree_subtree_kill(BTreeNode* node) {
 }
 
 
-// @brief Determine whether a descendent of `root` contains the key `key`
-//
-// @param[in] root the root of a btree
-// @param[in] key the key we're searching for
-//
-// @return a return code
-//    - 0: tree doesn't contain `key`
-//    - 1: tree contains `key`
+////////////////////////////////////////////////////////////////////////////////
+// INSERTION                                                                  //
+////////////////////////////////////////////////////////////////////////////////
+
+
+/** @brief Determine whether a descendent of `root` contains the key `key`
+ *
+ *  @param[in] root the root of a btree
+ *  @param[in] key the key we're searching for
+ * 
+ *  @return a return code
+ *     - 0: tree doesn't contain `key`
+ *     - 1: tree contains `key`
+ */
 int btree_node_contains_key(BTreeNode* root, int key) {
   BTreeNode* ptr = root;
   int child_idx = 0;
@@ -120,29 +131,30 @@ int btree_node_contains_key(BTreeNode* root, int key) {
   return 0;
 }
 
-
-// @brief Finds the leaf of (the tree rooted at) `root` where `key` should be 
-// inserted.
-//
-// @details
-//
-// @par Assumptions
-//    - The tree rooted at `root` does not contain `key`. We check for this, in 
-//    the function, but we that check is inteded as a last resort.
-//
-// @param[in] root root of the tree
-// @param[in] key key we're finding
-// @param[out] last_nonfull_anc_ptr pointer to the last non-full ancestor of `leaf`
-// (including `leaf`)
-// consecutive ancestors starting at `leaf` (including `leaf`) that are full 
-// @param[in] inc_subtree_sizes flag that determines whether we increase the 
-// subtree_size of each ancestor of `leaf` (including `leaf`). TODO: Replace 
-// this with a `flags` field 
-//
-// @return a return code
-//    - 0: Error
-//    - 1: (success) Didn't find `key`: `node_ptr` points to the leaf where 
-//    `key` should be inserted
+/**
+ * @brief Finds the leaf of (the tree rooted at) `root` where `key` should be 
+ * inserted.
+ *
+ * @details
+ *
+ * @par Assumptions
+ *    - The tree rooted at `root` does not contain `key`. We check for this, in 
+ *    the function, but we that check is inteded as a last resort.
+ *
+ * @param[in] root root of the tree
+ * @param[in] key key we're finding
+ * @param[out] last_nonfull_anc_ptr pointer to the last non-full ancestor of `leaf`
+ * (including `leaf`)
+ * consecutive ancestors starting at `leaf` (including `leaf`) that are full 
+ * @param[in] inc_subtree_sizes flag that determines whether we increase the 
+ * subtree_size of each ancestor of `leaf` (including `leaf`). TODO: Replace 
+ * this with a `flags` field 
+ *
+ * @return a return code
+ *    - 0: Error
+ *    - 1: (success) Didn't find `key`: `node_ptr` points to the leaf where 
+ *    `key` should be inserted
+ */
 int btree_node_find_closest_nonfull_anc(
   BTreeNode* root,
   int key,
@@ -204,31 +216,32 @@ found_key:
   return 0;
 }
 
-
-// @brief Finds the descendent of `root` and index of `root`'s keys of `key`.
-//
-// @par details
-//
-// @par Assumptions
-//    - A descendent of `root` contains `key`
-//
-// @param[in] root root of the tree
-// @param[in] key key we're finding
-// @param[out] node_ptr pointer to the descendent `node` of `root` containing `key`.
-// Set to NULL if the tree doesn't contain `key`. 
-// @param[out] key_idx_ptr pointer to the index of `node` where `key` exists
-// @param[out] last_over_min_cap_anc_ptr pointer to the last ancestor of `node` with
-// more than `t` children
-// @param[out] num_min_cap_ancestors_ptr pointer to an integer that is the number of 
-// consecutive ancestors starting at `node` with `t` children
-// @param[in] inc_subtree_sizes flag that determines whether we increase the 
-// subtree_size of each ancestor of `node`. Used for insertion operations. 
-// WARNING: This should only be set if we're certain that the tree contains 
-// `key`. TODO: Replace this with a `flags` field
-//
-// @return a return code
-//    - 0: Error
-//    - 1: Found `key`
+/**
+ * @brief Finds the descendent of `root` and index of `root`'s keys of `key`.
+ *
+ * @par details
+ *
+ * @par Assumptions
+ *    - A descendent of `root` contains `key`
+ *
+ * @param[in] root root of the tree
+ * @param[in] key key we're finding
+ * @param[out] node_ptr pointer to the descendent `node` of `root` containing `key`.
+ * Set to NULL if the tree doesn't contain `key`. 
+ * @param[out] key_idx_ptr pointer to the index of `node` where `key` exists
+ * @param[out] last_over_min_cap_anc_ptr pointer to the last ancestor of `node` with
+ * more than `t` children
+ * @param[out] num_min_cap_ancestors_ptr pointer to an integer that is the number of 
+ * consecutive ancestors starting at `node` with `t` children
+ * @param[in] inc_subtree_sizes flag that determines whether we increase the 
+ * subtree_size of each ancestor of `node`. Used for insertion operations. 
+ * WARNING: This should only be set if we're certain that the tree contains 
+ * `key`. TODO: Replace this with a `flags` field
+ *
+ * @return a return code
+ *    - 0: Error
+ *    - 1: Found `key`
+ */
 int btree_node_find_key(
   BTreeNode* root,
   int key, 
@@ -309,23 +322,25 @@ success:
 }
 
 
-// @brief Splits a node (subroutine for `btree_node_insert_impl`)
-//
-// @detals `key` is being inserted into the subtree rooted at `node`. This 
-// function splits `node`, storing the right half in the node `rsib_ptr` points
-// to and the separation key in `next_key_ptr`.
-//
-// @par Assumptions
-//    - `node` is full
-//
-// @param[in] node Node being split
-// @param[out] rsib Second (right) node `node` is split into
-// @paran[out] next_key_ptr Points to the key `node` was split at
-// @paran[in] key Key we're inserting into the tree
-//
-// @return A return code
-//    - 0: Error (OOM)
-//    - 1: OK
+/**
+ * @brief Splits a node (subroutine for `btree_node_insert_impl`)
+ *
+ * @detals `key` is being inserted into the subtree rooted at `node`. This 
+ * function splits `node`, storing the right half in the node `rsib_ptr` points
+ * to and the separation key in `next_key_ptr`.
+ *
+ * @par Assumptions
+ *    - `node` is full
+ *
+ * @param[in] node Node being split
+ * @param[out] rsib Second (right) node `node` is split into
+ * @paran[out] next_key_ptr Points to the key `node` was split at
+ * @paran[in] key Key we're inserting into the tree
+ *
+ * @return A return code
+ *    - 0: Error (OOM)
+ *    - 1: OK
+ */
 int btree_node_split(BTreeNode* node, BTreeNode** rsib_ptr, int* next_key_ptr, int key) {
   const int size = node->node_size;
   const int l_start = size / 2;
@@ -370,41 +385,43 @@ int btree_node_split(BTreeNode* node, BTreeNode** rsib_ptr, int* next_key_ptr, i
 }
 
 
-// @brief Inserts a key into a btree
-//
-// @details TODO
-//
-// The insertion algorithm is described below:
-//
-//    1. Find the leaf L whose range contains `key`.
-//    2. Find the first ancestor A of L that is not full, or create one if all 
-//       are full.
-//    3. Get child B of A where `key` should be inserted.
-//    4. Split B into (B1, B2) at separation key k.
-//    5. Insert (k, B2) into A.
-//    6. A is set to B1 if k < `key` or B2 otherwise.
-//    7. If A is an internal node, go to line 3. 
-//    8. [A is a leaf] Insert `key` into A.
-//
-// Variable names in our implementation reference this algorithm (albeit in 
-// lower case).
-//
-// @param[in] root Root of a btree
-// @param[in] val Key to be inserted into the tree
-// @param[out] new_root_ptr Pointer to the root of the tree after `val` is 
-// inserted
-//
-// @return A return code
-//    - 0: Error
-//    - 1: OK
-//    - 2: `val` already exists in the subtree with root `root`
+/**
+ * @brief Inserts a key into a btree
+ *
+ * @details TODO
+ *
+ * @par AlgorithmThe insertion algorithm is described below:
+ *
+ *    1. Find the leaf L whose range contains `key`.
+ *    2. Find the first ancestor A of L that is not full, or create one if all 
+ *       are full.
+ *    3. Get child B of A where `key` should be inserted.
+ *    4. Split B into (B1, B2) at separation key k.
+ *    5. Insert (k, B2) into A.
+ *    6. A is set to B1 if k < `key` or B2 otherwise.
+ *    7. If A is an internal node, go to line 3. 
+ *    8. [A is a leaf] Insert `key` into A.
+ *
+ * Variable names in our implementation reference this algorithm (albeit in 
+ * lower case).
+ *
+ * @param[in] root Root of a btree
+ * @param[in] val Key to be inserted into the tree
+ * @param[out] new_root_ptr Pointer to the root of the tree after `val` is 
+ * inserted
+ *
+ * @return A return code
+ *    - 0: Error
+ *    - 1: OK
+ *    - 2: `val` already exists in the subtree with root `root`
+ */
 int btree_node_insert_impl(BTreeNode* root, int key, BTreeNode** new_root_ptr) {
+  // Default: root doesn't change
+  *new_root_ptr = root;
+
   // Exit early if we find `key` in the tree.
   if (btree_node_contains_key(root, key))
     return 2;
-
-  // Default: root doesn't change
-  *new_root_ptr = root;
 
   BTreeNode* a = NULL;
   if (!btree_node_find_closest_nonfull_anc(root, key, &a, 1))
@@ -443,11 +460,15 @@ int btree_node_insert_impl(BTreeNode* root, int key, BTreeNode** new_root_ptr) {
 }
 
 
+////////////////////////////////////////////////////////////////////////////////
+// DELETION                                                                   //
+////////////////////////////////////////////////////////////////////////////////
 
-// DELETE
 
-// Get the greatest key in the tree ordered before `node->keys[key_idx]` 
-// assuming `node` is internal
+/**
+ * Get the greatest key in the tree ordered before `node->keys[key_idx]` 
+ * assuming `node` is internal
+ */
 static void btree_node_get_pred(BTreeNode* node, int key_idx, BTreeNode** pred_leaf_ptr, int* pred_ptr) {
   BTreeNode* ptr = btree_node_get_child(node, key_idx);
   
@@ -458,11 +479,14 @@ static void btree_node_get_pred(BTreeNode* node, int key_idx, BTreeNode** pred_l
   *pred_ptr = btree_node_get_key(ptr, ptr->curr_size - 1);
 }
 
-// @brief Rotate right about `pivot_idx`
-//
-// @details
-//
-// @par Assumptions
+
+/**
+ * @brief Rotate right about `pivot_idx`
+ *
+ * @details
+ *
+ * @par Assumptions
+ */
 static void btree_node_rotate_right(BTreeNode* lsib, BTreeNode* rsib, 
                                     BTreeNode* par, int pivot_idx) {
   // append pivot and `lsib`'s last child to the front of rsib
@@ -492,12 +516,16 @@ static void btree_node_rotate_right(BTreeNode* lsib, BTreeNode* rsib,
 }
 
 
-// @brief Rotate left about `pivot_idx`
-//
-// @details
-//
-// @par Assumptions
-//    - `rsib` has at least t children
+/**
+ * @brief Rotate left about `pivot_idx
+ *
+ * @par Assumptions - `rsib` has at least t children
+ *
+ * @param lsib 
+ * @param rsib
+ * @param par
+ * @param pivot_idx
+ */
 static void btree_node_rotate_left(BTreeNode* lsib, BTreeNode* rsib, BTreeNode* par, int pivot_idx) {
   // append pivot and `rsib`'s first child to the back of lsib
   // replace pivot with first key of `rsib`
@@ -525,12 +553,18 @@ static void btree_node_rotate_left(BTreeNode* lsib, BTreeNode* rsib, BTreeNode* 
   btree_node_set_key(par, pivot_idx, rsib_first_key);
 }
 
-// @brief merge `lsib` and `rsib`, storing the result in `lsib`
-//
-// @details
-//
-// @par Assumptions
-//    - `lsib` and `rsib` are either both leaves or both internal
+
+/**
+ * @brief Merge `lsib` and `rsib`, storing the result in `lsib`
+ *
+ * @param lsib 
+ * @param rsib
+ * @param par
+ * @param sep_idx
+ * 
+ * @par Assumptions
+ *   - `lsib` and `rsib` are either both leaves or both internal
+ */
 static void btree_node_merge_sibs(BTreeNode* lsib, BTreeNode* rsib, BTreeNode* par, int sep_idx) {
   // the pivot key, then `rsib`'s keys and (if `lsib` is internal) `rsib`'s
   // children are appended to `lsib`
@@ -556,19 +590,21 @@ static void btree_node_merge_sibs(BTreeNode* lsib, BTreeNode* rsib, BTreeNode* p
 }
 
 
-// @brief Deletes a `val` from the btree if the tree contains `val`
-//
-// @details If `val` in a leaf, it is replaced by its predecessor
-//
-// @param[in] root Root of a btree
-// @param[in] val Key to be removed from the tree
-// @param[out] new_root_ptr Pointer to the root of the tree after `val` is 
-// (maybe) removed 
-//
-// @return A return code
-//    - 0: Error
-//    - 1: OK
-//    - 2: Not found
+/**
+ * @brief Deletes a `val` from the btree if the tree contains `val`
+ *
+ * @details If `val` in a leaf, it is replaced by its predecessor
+ *
+ * @param[in] root Root of a btree
+ * @param[in] val Key to be removed from the tree
+ * @param[out] new_root_ptr Pointer to the root of the tree after `val` is 
+ * (maybe) removed 
+ *
+ * @return A return code
+ *    - 0: Error
+ *    - 1: OK
+ *    - 2: Not found
+ */
 int btree_node_delete_impl(BTreeNode* root, int val, BTreeNode** new_root_ptr) {
   // Allows us to skip a more complicated algorithm if we find it. 
   if (!btree_node_contains_key(root, val))
