@@ -135,7 +135,13 @@ int btree_node_contains_key(BTreeNode* root, int key) {
  * @brief Finds the leaf of (the tree rooted at) `root` where `key` should be 
  * inserted.
  *
- * @details
+ * @details Exactly one leaf `leaf` has a range containing `key`. This function 
+ *
+ *    1. finds `leaf`and its closest ancestor with less than 
+ *       `root->node_size + 1` children 
+ *
+ *    2. increments the subtree sizes of all ancestors before and including the 
+ *       first non-full ancestor of `leaf`
  *
  * @par Assumptions
  *    - The tree rooted at `root` does not contain `key`. We check for this, in 
@@ -148,7 +154,7 @@ int btree_node_contains_key(BTreeNode* root, int key) {
  * consecutive ancestors starting at `leaf` (including `leaf`) that are full 
  * @param[in] inc_subtree_sizes flag that determines whether we increase the 
  * subtree_size of each ancestor of `leaf` (including `leaf`). TODO: Replace 
- * this with a `flags` field 
+ * this with a `flags` field
  *
  * @return a return code
  *    - 0: Error
@@ -158,8 +164,7 @@ int btree_node_contains_key(BTreeNode* root, int key) {
 int btree_node_find_closest_nonfull_anc(
   BTreeNode* root,
   int key,
-  BTreeNode** last_nonfull_anc_ptr,
-  int inc_subtree_sizes)
+  BTreeNode** last_nonfull_anc_ptr)
 {
   BTreeNode* ptr = root;
   BTreeNode* last_nonfull_anc = NULL;
@@ -169,13 +174,17 @@ int btree_node_find_closest_nonfull_anc(
   while (!btree_node_is_leaf(ptr)) {
     // Update output variables
     if (!btree_node_is_full(ptr)) {
+
+      // Update subtree sizes of ancestors between last_nonfull_anc and ptr
+      BTreeNode* temp = ptr;
+      while (temp != last_nonfull_anc) {
+        temp->subtree_size += 1;
+        temp = temp->par;
+      }
+
       last_nonfull_anc = ptr;
     }
     
-    if (inc_subtree_sizes) {
-      ptr->subtree_size += 1;
-    }
-
     // Descent logic
     if (btree_node_get_key(ptr, ptr->curr_size - 1) < key) {
       child_idx = ptr->curr_size;
@@ -197,11 +206,15 @@ int btree_node_find_closest_nonfull_anc(
   
   // Update output variables one last time
   if (!btree_node_is_full(ptr)) {
-    last_nonfull_anc = ptr;
-  }
 
-  if (inc_subtree_sizes) {
-    ptr->subtree_size += 1;
+    // Update subtree sizes of ancestors between last_nonfull_anc and ptr
+    BTreeNode* temp = ptr;
+    while (temp != last_nonfull_anc) {
+      temp->subtree_size += 1;
+      temp = temp->par;
+    }
+
+    last_nonfull_anc = ptr;
   }
 
   // Make sure the leaf doesn't contain `key`
@@ -373,12 +386,6 @@ int btree_node_split(BTreeNode* node, BTreeNode** rsib_ptr, int* next_key_ptr, i
 #endif
   }
 
-  // `node`'s subtree_size was incremented when we searched for the leaf. If 
-  // we're inserting `key` into `rsib`, we have to undo this. 
-  if (key > *next_key_ptr) {
-    rsib->subtree_size += 1;
-  }
-
   node->subtree_size -= rsib->subtree_size + 1; // +1 for separation key
 
   return 1;
@@ -424,7 +431,7 @@ int btree_node_insert_impl(BTreeNode* root, int key, BTreeNode** new_root_ptr) {
     return 2;
 
   BTreeNode* a = NULL;
-  if (!btree_node_find_closest_nonfull_anc(root, key, &a, 1))
+  if (!btree_node_find_closest_nonfull_anc(root, key, &a))
     return 0;
 
   if (a == NULL) {
@@ -433,7 +440,9 @@ int btree_node_insert_impl(BTreeNode* root, int key, BTreeNode** new_root_ptr) {
       return 0;
 
     btree_node_set_first_child(a, root);
-    a->subtree_size = root->subtree_size;
+    // +1 Since btree_node_find_closest_nonfull_anc didn't increment any 
+    // subtree sizes as all ancestors were full
+    a->subtree_size = root->subtree_size + 1; 
     *new_root_ptr = a;
   }
 
@@ -452,6 +461,7 @@ int btree_node_insert_impl(BTreeNode* root, int key, BTreeNode** new_root_ptr) {
 
     // Descend
     a = key < k ? b1 : b2;
+    a->subtree_size += 1; // for `key`
   }
 
   btree_node_insert_key_and_child_assuming_not_full(a, key, NULL);
