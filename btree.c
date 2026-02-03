@@ -177,9 +177,8 @@ static int* update_local_child_idx_cache(int* local_child_idx_cache,
  * @param[out] last_nonfull_anc_ptr pointer to the last non-full ancestor of `leaf`
  * (including `leaf`)
  * consecutive ancestors starting at `leaf` (including `leaf`) that are full 
- * @param[in] inc_subtree_sizes flag that determines whether we increase the 
- * subtree_size of each ancestor of `leaf` (including `leaf`). TODO: Replace 
- * this with a `flags` field
+ * @param[out] child_idx_cache path from last_nonfull_anc (or new root if all 
+ * ancestors are full) to the leaf where `key` will be inserted.
  *
  * @return a return code
  *    - 0: Error
@@ -204,6 +203,8 @@ int btree_node_find_closest_nonfull_anc(
   // Depth in the subtree rooted at last_nonfull_anc. Assume a depth of 1 in 
   // case all ancestors are full. Otherwise, depth will be reset to zero.
   int depth = 1;
+  // FIXME FIXME FIXME: This may not be true. What if the key is in a subtree rooted in the 
+  // right hand side of `root`?
   local_child_idx_cache[0] = 0;
   
   // Search for a node containing `key`
