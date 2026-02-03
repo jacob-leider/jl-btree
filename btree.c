@@ -131,6 +131,31 @@ int btree_node_contains_key(BTreeNode* root, int key) {
   return 0;
 }
 
+
+// Helper for btree_node_find_closest_nonfull_anc and btree_node_find_closest_over_min_cap_anc
+// Add child_idx to local_child_idx_cache, resizing if necessary. Return the current pointer to the cache.
+static int* update_local_child_idx_cache(int* local_child_idx_cache, 
+  int* child_idx_cache_size, 
+  int child_idx, 
+  int depth) {
+  // Update cache
+  if (depth >= *child_idx_cache_size) {
+      // Resize
+      *child_idx_cache_size *= 2;
+      int* new_local_child_idx_cache = (int*)realloc(local_child_idx_cache, 
+                                  sizeof(int) * (*child_idx_cache_size));
+
+      local_child_idx_cache[depth] = child_idx;
+      local_child_idx_cache = new_local_child_idx_cache;
+    }
+    else {
+      local_child_idx_cache[depth] = child_idx;
+    }
+    
+    return local_child_idx_cache;
+}
+
+
 /**
  * @brief Finds the leaf of (the tree rooted at) `root` where `key` should be 
  * inserted.
@@ -164,12 +189,23 @@ int btree_node_contains_key(BTreeNode* root, int key) {
 int btree_node_find_closest_nonfull_anc(
   BTreeNode* root,
   int key,
-  BTreeNode** last_nonfull_anc_ptr)
+  BTreeNode** last_nonfull_anc_ptr,
+  int** child_idx_cache)
 {
+  // TODO: Move
+  const int default_child_idx_cache_size = 8;
+
   BTreeNode* ptr = root;
   BTreeNode* last_nonfull_anc = NULL;
   int child_idx = 0;
 
+  int* local_child_idx_cache = (int*)malloc(sizeof(int) * default_child_idx_cache_size);
+  int child_idx_cache_size = default_child_idx_cache_size;
+  // Depth in the subtree rooted at last_nonfull_anc. Assume a depth of 1 in 
+  // case all ancestors are full. Otherwise, depth will be reset to zero.
+  int depth = 1;
+  local_child_idx_cache[0] = 0;
+  
   // Search for a node containing `key`
   while (!btree_node_is_leaf(ptr)) {
     // Update output variables
@@ -181,8 +217,9 @@ int btree_node_find_closest_nonfull_anc(
         temp->subtree_size += 1;
         temp = temp->par;
       }
-
+      
       last_nonfull_anc = ptr;
+      depth = 0;
     }
     
     // Descent logic
@@ -200,8 +237,20 @@ int btree_node_find_closest_nonfull_anc(
       if (btree_node_get_key(ptr, child_idx) == key) goto found_key;
       child_idx += 1;
     }
+    
+    // Update cache
+    local_child_idx_cache = update_local_child_idx_cache(local_child_idx_cache,
+      &child_idx_cache_size,
+      child_idx,
+      depth);
+
+    if (!local_child_idx_cache) {
+      free(local_child_idx_cache);
+      return 0;
+    }
 
     btree_node_intl_descend(&ptr, child_idx);
+    depth += 1;
   }
   
   // Update output variables one last time
@@ -223,6 +272,7 @@ int btree_node_find_closest_nonfull_anc(
 
 success:
   *last_nonfull_anc_ptr = last_nonfull_anc;
+  *child_idx_cache = local_child_idx_cache;
   return 1;
 
 found_key:
@@ -431,7 +481,8 @@ int btree_node_insert_impl(BTreeNode* root, int key, BTreeNode** new_root_ptr) {
     return 2;
 
   BTreeNode* a = NULL;
-  if (!btree_node_find_closest_nonfull_anc(root, key, &a))
+  int* child_idx_cache = NULL;
+  if (!btree_node_find_closest_nonfull_anc(root, key, &a, &child_idx_cache))
     return 0;
 
   if (a == NULL) {
@@ -446,9 +497,12 @@ int btree_node_insert_impl(BTreeNode* root, int key, BTreeNode** new_root_ptr) {
     *new_root_ptr = a;
   }
 
+  int depth = 0;
   while (!btree_node_is_leaf(a)) {
     // Get child B of A whose range contains `key`
-    BTreeNode* b1 = btree_node_get_child(a, find_idx_of_min_key_greater_than_val(a, key));
+    int child_idx = child_idx_cache[depth];
+
+    BTreeNode* b1 = btree_node_get_child(a, child_idx);
     BTreeNode* b2 = NULL;
 
     // Split B into B1, B2, k (B1: lchild, B2: rchild, k: sep_key)
@@ -462,6 +516,8 @@ int btree_node_insert_impl(BTreeNode* root, int key, BTreeNode** new_root_ptr) {
     // Descend
     a = key < k ? b1 : b2;
     a->subtree_size += 1; // for `key`
+    
+    depth += 1;
   }
 
   btree_node_insert_key_and_child_assuming_not_full(a, key, NULL);
@@ -473,6 +529,219 @@ int btree_node_insert_impl(BTreeNode* root, int key, BTreeNode** new_root_ptr) {
 ////////////////////////////////////////////////////////////////////////////////
 // DELETION                                                                   //
 ////////////////////////////////////////////////////////////////////////////////
+
+
+static int btree_node_is_or_has_sib_over_min_cap(BTreeNode* node, int child_idx) {
+  if (btree_node_over_min_cap(node))
+    return 1;
+
+  if (node->par == NULL) 
+    return 0;
+  
+  if (btree_node_over_min_cap(node))
+    return 1;
+  
+  // Non root
+  BTreeNode* lsib = NULL;
+  BTreeNode* rsib = NULL;
+  btree_node_get_sibs(node, node->child_idx, &lsib, &rsib);
+
+  if (lsib != NULL && btree_node_over_min_cap(lsib))
+    return 1;
+
+  if (rsib != NULL && btree_node_over_min_cap(rsib))
+    return 1;
+
+  return 0;
+}
+
+
+
+
+/**
+ * @brief Swaps the key with its predecessor and removes the predecessor from 
+ * its leaf
+ * 
+ * @details Decreases the subtree sizes of all ancestors before and equal to the 
+ * last ancestor of the leaf either containing key or from which the predecessor 
+ * was removed for which the subtree size or the subtree size of a sibling is 
+ * over minimum capacity.
+ * 
+ * @par Assumptions
+ *   - A descendent of `root` contains `key`
+ *
+ * @param root 
+ * @param key
+ * @param last_over_min_cap_anc_ptr
+ * @param child_idx_cache
+ *
+ * @return A return code
+ *    - 0: Error
+ *    - 1: OK
+ */
+int btree_node_find_closest_over_min_cap_anc(
+  BTreeNode* root,
+  int key,
+  BTreeNode** last_over_min_cap_anc_ptr, 
+  int** child_idx_cache)
+{
+  // TODO: Move
+  const int default_child_idx_cache_size = 8;
+
+  BTreeNode* ptr = root;
+  BTreeNode* last_over_min_cap_anc = NULL;
+  int child_idx = 0;
+  
+  int* local_child_idx_cache = (int*)malloc(sizeof(int) * default_child_idx_cache_size);
+  int child_idx_cache_size = default_child_idx_cache_size;
+  int depth = 0;
+  
+  // Search for a node containing `key`
+  while (!btree_node_is_leaf(ptr)) {
+    // Update output variables
+    if (btree_node_is_or_has_sib_over_min_cap(ptr, child_idx)) {
+      
+      // Update subtree sizes of ancestors between last_over_min_cap_anc and ptr
+      BTreeNode* temp = ptr;
+      while (temp != last_over_min_cap_anc) {
+        temp->subtree_size -= 1;
+        temp = temp->par;
+      }
+      
+      last_over_min_cap_anc = ptr;
+    }
+
+    // Descent logic
+    if (btree_node_get_key(ptr, ptr->curr_size - 1) < key) {
+      child_idx = ptr->curr_size;
+    }
+    else if (btree_node_get_key(ptr, ptr->curr_size - 1) == key) {
+      goto found_key;
+    }
+    else if (btree_node_get_key(ptr, 0) > key) {
+      child_idx = 0;
+    }
+    else {
+      child_idx = binary_search(ptr->keys, 0, ptr->curr_size, key);
+      if (btree_node_get_key(ptr, child_idx) == key) goto found_key;
+      child_idx += 1;
+    }
+    
+    // Update cache
+    local_child_idx_cache = update_local_child_idx_cache(local_child_idx_cache, 
+      &child_idx_cache_size, 
+      child_idx, 
+      depth);
+
+    if (!local_child_idx_cache) {
+      free(local_child_idx_cache);
+      return 0;
+    }
+
+    btree_node_intl_descend(&ptr, child_idx);
+    depth += 1;
+  }
+  
+  // Did not find key in internal nodes Check leaf
+  child_idx = binary_search(ptr->keys, 0, ptr->curr_size, key);
+  if (btree_node_get_key(ptr, child_idx) == key)
+    goto found_key;
+
+  // Did not find key. Error.
+  free(local_child_idx_cache);
+
+  return 0;
+
+found_key:
+  // Here, child_idx points to key.
+  BTreeNode* node_containing_key = ptr;
+  
+  if (btree_node_is_leaf(ptr)) {
+    // Found key in leaf
+    btree_node_set_key(node_containing_key, child_idx, 
+                        btree_node_get_key(ptr, child_idx));
+    
+    // Delete the key from the leaf
+    btree_node_remove_key(ptr, child_idx); // TODO: Use the correct routines
+    
+    goto success;
+  }
+
+  // Find predecessor
+  if (btree_node_is_or_has_sib_over_min_cap(ptr, child_idx)) {
+    
+    // Update subtree sizes of ancestors between last_over_min_cap_anc and ptr
+    BTreeNode* temp = ptr;
+    while (temp != last_over_min_cap_anc) {
+      temp->subtree_size -= 1;
+      temp = temp->par;
+    }
+    
+    last_over_min_cap_anc = ptr;
+  }
+  
+  // Update cache
+  local_child_idx_cache = update_local_child_idx_cache(local_child_idx_cache, 
+    &child_idx_cache_size, 
+    child_idx, 
+    depth);
+
+  if (!local_child_idx_cache) {
+    free(local_child_idx_cache);
+    return 0;
+  }
+  
+  // Left one...
+  btree_node_intl_descend(&ptr, child_idx);
+  depth += 1;
+
+  // ...right until we hit a leaf.
+  while (!btree_node_is_leaf(ptr)) {
+    // Update output variables
+    if (btree_node_is_or_has_sib_over_min_cap(ptr, ptr->curr_size)) {
+      
+      // Update subtree sizes of ancestors between last_over_min_cap_anc and ptr
+      BTreeNode* temp = ptr;
+      while (temp != last_over_min_cap_anc) {
+        temp->subtree_size -= 1;
+        temp = temp->par;
+      }
+      
+      last_over_min_cap_anc = ptr;
+    }
+    
+    // Update cache
+    local_child_idx_cache = update_local_child_idx_cache(local_child_idx_cache, 
+      &child_idx_cache_size, 
+      child_idx, 
+      depth);
+
+    if (!local_child_idx_cache) {
+      free(local_child_idx_cache);
+      return 0;
+    }
+
+    // Descend (always rightmost)
+    btree_node_intl_descend(&ptr, ptr->curr_size);
+    depth += 1;
+  }
+  
+  // Found the leaf containing the predecessor of `key`. Replace `key` with its 
+  // predecessor.
+  btree_node_set_key(node_containing_key, child_idx, 
+                      btree_node_get_key(ptr, ptr->curr_size - 1));
+  
+  // Delete the predecessor from its leaf
+  //
+  //    * TODO: Use the correct routines. This doesn't update subtree_size and 
+  //      may have other unintended side effects that I haven't thought of.
+  btree_node_pop_back_key(ptr, NULL);
+
+success:
+  *last_over_min_cap_anc_ptr = last_over_min_cap_anc;
+  *child_idx_cache = local_child_idx_cache;
+  return 1;
+}
 
 
 /**
@@ -600,6 +869,28 @@ static void btree_node_merge_sibs(BTreeNode* lsib, BTreeNode* rsib, BTreeNode* p
 }
 
 
+
+int btree_node_delete_impl_2(BTreeNode* root, int val, BTreeNode** new_root_ptr) {
+  if (!btree_node_contains_key(root, val))
+    return 2;
+  
+  BTreeNode* ptr = NULL;
+  int** child_idx_cache = NULL;
+  if (!btree_node_find_closest_over_min_cap_anc(root, val, ptr, child_idx_cache))
+    return 0; // TODO: Handle appropriately
+  
+  // left one...
+  // 1. rebalance this node
+  // 2. 
+
+  while (!btree_node_is_leaf(ptr)) {
+    
+  }
+
+  return 1;
+}
+
+
 /**
  * @brief Deletes a `val` from the btree if the tree contains `val`
  *
@@ -660,8 +951,7 @@ int btree_node_delete_impl(BTreeNode* root, int val, BTreeNode** new_root_ptr) {
   }
 
   // Rebalance the tree if the leaf has too few keys
-  const int t = btree_node_t(sib2);
-  while (sib2->par != NULL && sib2->curr_size < t) {
+  while (sib2->par != NULL && btree_node_under_min_cap(sib2)) {
     // sib2 has too few keys -- we can borrow a key from a sibling or merge with 
     // a sibling
     BTreeNode* sib1 = NULL;
@@ -669,11 +959,11 @@ int btree_node_delete_impl(BTreeNode* root, int val, BTreeNode** new_root_ptr) {
     BTreeNode *par = sib2->par;
     btree_node_get_sibs(sib2, sib2->child_idx, &sib1, &sib3);
   
-    if (sib3 != NULL && sib3->curr_size > t) {
+    if (sib3 != NULL && btree_node_over_min_cap(sib3)) {
       // right sibling can spare a key
       btree_node_rotate_left(sib2, sib3, par, sib2->child_idx);
     }
-    else if (sib1 != NULL && sib1->curr_size > t) {
+    else if (sib1 != NULL && btree_node_over_min_cap(sib1)) {
       // left sibling can spare a key
       btree_node_rotate_right(sib1, sib2, par, sib2->child_idx - 1);
     }

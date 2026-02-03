@@ -50,3 +50,4 @@
 # *.depend
 # bin/
 # obj/
+.vscode/*

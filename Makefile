@@ -15,3 +15,6 @@ $(TARGET): $(OBJS)
 .PHONY: clean
 clean:
 	rm -f *.o main
+
+debug: CFLAGS += -DDEBUG -g
+debug: $(TARGET)

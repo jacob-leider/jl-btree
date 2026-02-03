@@ -21,13 +21,19 @@ struct BTreeNode {
 
 #define btree_node_is_full(node) (node->curr_size == node->node_size)
 
+#define btree_node_t(node) (node->node->size + 1) / 2 - 1 ((node->node_size + 1) / 2 - 1)
+
+#define btree_node_has_min_cap(node) (node->curr_size == (node->node_size + 1) / 2 - 1)
+
+#define btree_node_under_min_cap(node) (node->curr_size < (node->node_size + 1) / 2 - 1)
+
+#define btree_node_over_min_cap(node) (node->curr_size > (node->node_size + 1) / 2 - 1)
+
 #define btree_node_is_leaf(node) (node->is_leaf)
 
 #define btree_node_is_root(node) (node->par == NULL)
 
 #define btree_node_is_initialized(node) (node != NULL & node->keys != NULL & node->children != NULL)
-
-#define btree_node_t(node) ((node->node_size + 1) / 2 - 1)
 
 #define btree_node_has_min_cap(node) (node->curr_size == (node->node_size + 1) / 2 - 1)
 
