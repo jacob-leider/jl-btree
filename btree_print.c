@@ -1,16 +1,17 @@
+#include "btree_node.h"
 #include "btree.h"
 #include "btree_print.h"
-#include "../printutilsgeneral.h"
+#include "printutils.h"
 #include <stdio.h>
 #include <stdarg.h>
 #include <stdlib.h>
 
 void printNodeVals(BTreeNode* node) {
-  printArr(node->vals, node->curr_size);
+  printArr(node->keys, node->curr_size);
 }
 
 void printNodeKeys(BTreeNode* node) {
-  printArr(node->vals, node->curr_size);
+  printArr(node->keys, node->curr_size);
 }
 
 void btree_node_print(BTreeNode* node) {
@@ -19,7 +20,7 @@ void btree_node_print(BTreeNode* node) {
   printf("\tcapacity:  %d\n", node->node_size);
   printf("\tcurrent:   %d\n", node->curr_size);
   printf("\telements:  ");
-  printArr(node->vals, node->curr_size);
+  printArr(node->keys, node->curr_size);
 }
 
 
@@ -28,9 +29,9 @@ void btree_node_print_and_point(BTreeNode* node, int pos) {
   printf("\tcapacity: %d\n", node->node_size);
   printf("\tcurrent: %d\n", node->curr_size);
   printf("\telements: ");
-  printArr(node->vals, node->curr_size);
+  printArr(node->keys, node->curr_size);
   printf("\t          ");
-  int num_digits = get_num_digits_of_first_n(node->vals, pos, 10) + 2 * pos;
+  int num_digits = get_num_digits_of_first_n(node->keys, pos, 10) + 2 * pos;
   for (int i = 0; i < num_digits; i++)
     printf(" ");
   printf("↑\n");
@@ -52,7 +53,7 @@ int PrintPath(BTreeNode* node, int pathlen, ...) {
     int key = va_arg(args, int);
     path[idx] = key;
 
-    node = node->keys[key];
+    node = node->children[key];
     if (!node) {
       printf("Missing key! -- ");
       printArr(path, idx + 1);

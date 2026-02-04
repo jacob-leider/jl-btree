@@ -3,7 +3,7 @@
 #ifndef __BTREE_PRINT_H__
 #define __BTREE_PRINT_H__
 
-#include "./btree.h"
+#include "./btree_node.h"
 
 void btree_node_print(BTreeNode* node);
 
