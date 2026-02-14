@@ -219,7 +219,6 @@ void btree_node_remove_key(BTreeNode* node, int idx) {
 #ifdef btree_keep_unused_mem_clean
   btree_node_set_last_key(node, 0);
 #endif
-  node->curr_size -= 1;
 }
 
 // Doesn't change subtree_size (caller is responsible)
