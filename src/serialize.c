@@ -1,6 +1,7 @@
 #include "./serialize.h"
 
 #include <ctype.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -18,7 +19,8 @@ typedef enum TokenType
     LPAREN,
     RPAREN,
     NUMBER,
-    ENDTOK
+    ENDTOK,
+    TOKTYPE_UNDEFINED
 } TokenType;
 
 typedef struct Token
@@ -40,86 +42,13 @@ typedef struct String
     int idx;
 } String;
 
-/**
- * @brief Tokenize a serialized btree
- *
- * @param s
- * @param len
- *
- * @return The head of a linked list of tokens
- *
- * TODO: Stop using a linked list wtf
- */
-TokenNode* tokenize(const char* s, int len)
+LexerSettings* default_lexer_settings()
 {
-    TokenNode* head = (TokenNode*)malloc(sizeof(TokenNode));
-    if (head == NULL)
-    {
-        printf("TOKENIZATION FAILURE\n");
-        return NULL;
-    }
+    const static LexerSettings settings = {.enforce_charset_restriction = true,
+        .enforce_node_size_limit                                        = true,
+        .enforce_number_syntax_rules                                    = true};
 
-    TokenNode* ptr = head;
-
-    int idx        = 0;
-    while (idx < len)
-    {
-        if (s[idx] == '(')
-        {
-            ptr->token.type = LPAREN;
-            idx++;
-        }
-        else if (s[idx] == ')')
-        {
-            ptr->token.type = RPAREN;
-            idx++;
-        }
-        else if (isdigit(s[idx]) || s[idx] == '-')
-        {
-            int sign = 1;
-            if (s[idx] == '-')
-            {
-                sign = -1;
-                idx += 1;
-                if (!isdigit(s[idx]))
-                {
-                    printf("TOKENIZATION FAILURE: Can't just put \"-\"\n");
-                    return NULL;
-                }
-            }
-            int val = 0;
-
-            while (idx < len && isdigit(s[idx]))
-            {
-                val *= 10;
-                val += s[idx] - '0';
-                idx++;
-            }
-
-            val *= sign;
-
-            ptr->token.type = NUMBER;
-            ptr->token.val  = val;
-        }
-        else
-        {
-            idx++;
-            continue;
-        }
-
-        ptr->next = (TokenNode*)malloc(sizeof(TokenNode));
-        if (ptr->next == NULL)
-        {
-            printf("TOKENIZATION FAILURE\n");
-            return NULL;
-        }
-
-        ptr = ptr->next;
-    }
-
-    ptr->token.type = ENDTOK;
-
-    return head;
+    return &settings;
 }
 
 static int str_inc_size(String* s, int bytes)
@@ -270,12 +199,266 @@ char* StrFromTree(BTreeNode* root)
     {
         printf("failed to serialize tree\n");
     }
-    printf("\n");
     return s.str;
 }
 
 /**
- * @brief Generate a btree from serialized format
+ * @brief Prepare a string for tokenization by validating it and determining how
+ * many tokens will be generated
+ *
+ * @param s
+ * @param len length of the string `s`
+ * @param settings
+ * @param err
+ *
+ * @return number of tokens that will be generated from `s`. 0 on failure.
+ */
+int validate_string_and_compute_n_tokens(
+    const char* s, int len, LexerSettings* settings, int node_size, char** err)
+{
+    *err                    = NULL;
+
+    int idx                 = 0;
+    int n_tokens            = 0;
+    int curr_node_size      = 0;
+    int depth               = 1;
+    TokenType last_tok_type = 0;
+    int max_depth           = 1;
+
+    // 1 Validate parentheses
+    for (int i = 0; i < len; i++)
+    {
+        if (s[i] == '(')
+        {
+            depth += 1;
+
+            max_depth = max(max_depth, depth);
+        }
+        else if (s[i] == ')')
+        {
+            if (depth == 0)
+            {
+                *err = "Invalid parentheses: unmatched \')\'";
+                return 0;
+            }
+
+            depth -= 1;
+        }
+    }
+
+    // Parentheses are valid
+    const int default_curr_size_stack_size = 8;
+    int default_curr_size_stack[8]         = {0};
+
+    int* curr_size_stack                   = default_curr_size_stack;
+
+    // Resize the stack if computed tree depth exceeded our default stack size
+    if (max_depth + 1 > default_curr_size_stack_size)
+    {
+        curr_size_stack = (int*)calloc((max_depth + 1), sizeof(int));
+        if (curr_size_stack == NULL)
+        {
+            *err = "OOM";
+            return 0;
+        }
+    }
+
+    while (idx < len)
+    {
+        if (s[idx] == '(')
+        {
+            if (last_tok_type == RPAREN)
+            {
+                *err = "Invalid token sequence: \")(\"";
+                return 0;
+            }
+
+            last_tok_type = LPAREN;
+            depth++;
+
+            curr_size_stack[depth] = 0;
+
+            n_tokens++;
+            idx++;
+        }
+        else if (s[idx] == ')')
+        {
+            last_tok_type = RPAREN;
+            depth--;
+            n_tokens++;
+            idx++;
+        }
+        else if (isdigit(s[idx]) || s[idx] == '-')
+        {
+            // (Maybe) ensure node doesn't exceed max node size
+            if (curr_size_stack[depth] == node_size &&
+                settings->enforce_node_size_limit)
+            {
+                *err = "Oversized node";
+                return 0;
+            }
+
+            // Fine for the first char in a number token
+            if (s[idx] == '-') idx += 1;
+
+            if (!isdigit(s[idx]) && settings->enforce_number_syntax_rules)
+            {
+                *err = "Invalid number syntax: lone \'-\'";
+                return 0;
+            }
+
+            // Only '0'-'9' valid until next non-digit char
+            while (idx < len)
+            {
+                if (isdigit(s[idx]))
+                {
+                    idx++;
+                }
+                else if (s[idx] == '-')
+                {
+                    if (settings->enforce_number_syntax_rules)
+                    {
+                        *err = "Invalid number syntax: \'-\' after a digit";
+                        return 0;
+                    }
+
+                    idx++;
+                }
+                else
+                {
+                    // Only break when we hit a non-number char
+                    break;
+                }
+            }
+
+            last_tok_type = NUMBER;
+            curr_size_stack[depth]++;
+            n_tokens++;
+        }
+        else
+        {
+            if (!isspace(s[idx]) && settings->enforce_charset_restriction)
+            {
+                *err = "Invalid character encountered";
+                return 0;
+            }
+
+            idx++;
+        }
+    }
+
+    return n_tokens;
+}
+
+/**
+ * @brief Tokenize a serialized btree
+ *
+ * @param s
+ * @param len Length of s
+ * @param tok_seq_ptr Pointer to the output token sequence
+ * @param n_tokens_ptr Length of the output token sequence
+ * @param settings [TODO:parameter]
+ * @param err_ptr
+ *
+ * @return whether the operation succeeded
+ */
+bool tokenize_tree_str(const char* s,
+    int len,
+    Token** tok_seq_ptr,
+    int* n_tokens_ptr,
+    LexerSettings* settings,
+    int node_size,
+    char** err_ptr)
+{
+    // Assume failure by default
+    *tok_seq_ptr = NULL;
+
+    char* err    = NULL;
+    int n_tokens =
+        validate_string_and_compute_n_tokens(s, len, settings, node_size, &err);
+    *n_tokens_ptr = n_tokens;
+
+    if (err != NULL)
+    {
+        *err_ptr = err;
+        return 0;
+    }
+
+    Token* tok_seq = (Token*)malloc(n_tokens * sizeof(Token));
+    if (tok_seq == NULL)
+    {
+        *err_ptr = "Lexer error: OOM";
+        return 0;
+    }
+
+    int tok_seq_idx = 0;
+
+    int str_idx     = 0;
+    while (str_idx < len)
+    {
+        if (s[str_idx] == '(')
+        {
+            tok_seq[tok_seq_idx].type = LPAREN;
+
+            str_idx++;
+
+            tok_seq_idx++;
+        }
+        else if (s[str_idx] == ')')
+        {
+            tok_seq[tok_seq_idx].type = RPAREN;
+
+            str_idx++;
+
+            tok_seq_idx++;
+        }
+        else if (isdigit(s[str_idx]) || s[str_idx] == '-')
+        {
+            int sign = 1;
+            if (s[str_idx] == '-')
+            {
+                sign = -1;
+                str_idx += 1;
+            }
+
+            int val = 0;
+
+            while (str_idx < len && isdigit(s[str_idx]))
+            {
+                val *= 10;
+                val += s[str_idx] - '0';
+                str_idx++;
+            }
+
+            val *= sign;
+
+            tok_seq[tok_seq_idx].type = NUMBER;
+            tok_seq[tok_seq_idx].val  = val;
+
+            tok_seq_idx++;
+        }
+        else
+        {
+            str_idx++;
+            continue;
+        }
+    }
+
+    *tok_seq_ptr = tok_seq;
+
+    return 1;
+}
+
+DeserializationSettings defaut_deserialization_settings(int node_size)
+{
+    const DeserializationSettings settings = {
+        .node_size = node_size, .lexer_settings = default_lexer_settings()};
+
+    return settings;
+};
+
+/**
+ * @brief Deserialize a serialized btree
  *
  * @par Tech notes
  *      - Can 100% be broken with weird syntax. Integers MUST be [-][0-9]+
@@ -287,32 +470,44 @@ char* StrFromTree(BTreeNode* root)
  *
  * @return 1 on success, 0 on failure (it will also scream at you on failure)
  */
-int TreeFromStr(const char* str, int len, int node_size, BTreeNode** root_ptr)
+int TreeFromStr(const char* str,
+    int len,
+    DeserializationSettings* settings,
+    BTreeNode** root_ptr)
 {
-    BTreeNode* root;
-    if (!btree_node_init(node_size, &root, 0))
+    // Validate settings
+    if (settings->node_size < 1)
+    {
+        printf(
+            "Deserialization error. Invalid settings: node_size must be a "
+            "positive integer");
+        return 0;
+    }
+
+    int n_tokens   = 0;
+    char* err      = NULL;
+    Token* tok_seq = NULL;
+    if (!tokenize_tree_str(str, len, &tok_seq, &n_tokens,
+            &settings->lexer_settings, settings->node_size, &err))
+    {
+        printf("Deserialization error. Details: \t- %s\n", err);
+        return 0;
+    }
+
+    BTreeNode* root = NULL;
+    if (!btree_node_init(settings->node_size, &root, 0))
     {
         return 0;
     }
 
-    TokenNode* head = tokenize(str, len);
-    BTreeNode* ptr  = root;
-    // TODO: This should really be undefined somehow
-    TokenType last_type = ENDTOK;
-
-    while (head != NULL)
+    BTreeNode* ptr = root;
+    for (int idx = 0; idx < n_tokens; idx++)
     {
-        TokenType type = head->token.type;
-        int val        = head->token.val;
+        TokenType type = tok_seq[idx].type;
+        int val        = tok_seq[idx].val;
 
         if (type == LPAREN)
         {
-            if (last_type == RPAREN)
-            {
-                printf("PARSE ERROR: Children without a separating key\n");
-                return 0;
-            }
-
             // Make it internal if it isn't already
             if (btree_node_is_leaf(ptr))
             {
@@ -323,7 +518,7 @@ int TreeFromStr(const char* str, int len, int node_size, BTreeNode** root_ptr)
             }
 
             BTreeNode* child;
-            if (!btree_node_init(node_size, &child, 0)) return 0;
+            if (!btree_node_init(settings->node_size, &child, 0)) return 0;
 
             child->par                    = ptr;
             ptr->children[ptr->curr_size] = child;
@@ -333,22 +528,23 @@ int TreeFromStr(const char* str, int len, int node_size, BTreeNode** root_ptr)
         {
             if (ptr->par == NULL)
             {
-                printf("PARSE ERROR: Too many closing parentheses\n");
+                printf(
+                    "Deserialization error. Details:\n\t- Too many closing "
+                    "parentheses\n");
                 return 0;
             }
 
-            // Ascend and add the new child's subtree size to that of the
-            // parent.
-            int subsize = ptr->subtree_size;
-            ptr         = ptr->par;
-            ptr->subtree_size += subsize;
+            ptr->par->subtree_size += ptr->subtree_size;
+            ptr = ptr->par;
         }
         else if (type == NUMBER)
         {
             if (ptr->curr_size == ptr->node_size)
             {
-                printf("PARSE ERROR: Too many keys in a node\n");
+                printf("Deserialization error. Details:\n\t- Overfull node\n");
+                return 0;
             }
+
             ptr->keys[ptr->curr_size] = val;
             ptr->curr_size += 1;
             ptr->subtree_size += 1;
@@ -357,14 +553,10 @@ int TreeFromStr(const char* str, int len, int node_size, BTreeNode** root_ptr)
         {
             // Probably fine
         }
-
-        last_type = type;
-        head      = head->next;
     }
 
-    // TreeFromStrPopulateVals(root);
-
     *root_ptr = root;
+
     return 1;
 }
 

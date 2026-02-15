@@ -3,6 +3,9 @@
 #ifndef __BTREE_CORE_H__
 #define __BTREE_CORE_H__
 
+#include "./delete.h"
+#include "./insert.h"
+
 struct BTreeNode;
 typedef struct BTreeNode BTreeNode;
 

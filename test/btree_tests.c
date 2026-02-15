@@ -251,11 +251,14 @@ int TestBTreeNodeInsertImplCase(int* test_num,
     // InsertTestCase test_case;
     // BuildInsertTestCase(&test_case, 1);
 
+    DeserializationSettings settings = {
+        .node_size = node_size, .lexer_settings = NULL};
+
     *test_num += 1;
     BTreeNode *before = NULL, *exp_after = NULL;
-    if (!TreeFromStr(before_str, strlen(before_str), node_size, &before) ||
+    if (!TreeFromStr(before_str, strlen(before_str), &settings, &before) ||
         !TreeFromStr(
-            exp_after_str, strlen(exp_after_str), node_size, &exp_after))
+            exp_after_str, strlen(exp_after_str), &settings, &exp_after))
         return 0;
 
     BTreeNode* after = NULL;
@@ -546,9 +549,13 @@ int TestBTreeNodeDeleteImplCase(int* test_num,
     int exp_rc)
 {
     *test_num += 1;
+
+    DeserializationSettings settings = {
+        .node_size = node_size, .lexer_settings = NULL};
+
     BTreeNode* before_root;
     if (!TreeFromStr(
-            before_tree_str, strlen(before_tree_str), node_size, &before_root))
+            before_tree_str, strlen(before_tree_str), &settings, &before_root))
         return 0;
 
     // BTreeNode* exp_after_root;
