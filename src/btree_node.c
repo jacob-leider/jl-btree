@@ -408,5 +408,17 @@ void btree_node_copy_child_range(BTreeNode* to,
     {
         btree_node_set_child(
             to, to_start + i, btree_node_get_child(from, from_start + i));
+        to->subtree_size +=
+            btree_node_get_child(to, to_start + i)->subtree_size;
+    }
+}
+
+void btree_node_append_child_range(
+    BTreeNode* to, BTreeNode* from, int from_start, int num_children)
+{
+    for (int i = 0; i < num_children; i++)
+    {
+        btree_node_set_child(to, i, btree_node_get_child(from, from_start + i));
+        to->subtree_size += btree_node_get_child(to, i)->subtree_size;
     }
 }

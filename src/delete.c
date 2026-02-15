@@ -12,25 +12,57 @@
 #include "printutils.h"
 #include "search.h"
 
+////////////////////////////////// Purpose /////////////////////////////////////
+///
+/// Implement B-Tree key-deletion
+///
+//////////////////////////////// Terminology ///////////////////////////////////
+///
+/// Consider a btree rooted at `root` containing key `key`. The following
+/// definitions are rigorous, and used in documentation throughout this file.
+///
+///     * "can spare"
+///
+/// A node of order `t` "can spare" if it has at least `2*t - 1` keys
+////
+///     * "can borrow"
+///
+/// Short for "can borrow a key from a sibling." A node of order `t` "can
+/// borrow" if it has a sibling with at least `2*t - 1` keys
+///
+///     * "pred-leaf"
+///
+/// The leaf containing the predecessor to `key`
+///
+///     * "min-cap chain"
+///
+/// The longest contiguous sequence of nodes that cannot spare or borrow a key
+/// (due to siblings being at minimum capcity) that contains the pred-leaf. If
+/// the pred-leaf can borrow or spare a key, then the min-cap chain is said to
+/// be empty.
+///
+///     * "closest over-min-cap ancestor
+///
+/// The deepest ancestor of `root` that can spare or can borrow.
+///
+////////////////////////////////////////////////////////////////////////////////
+
+// Used to cache a path
 typedef struct ChildIdxCache
 {
     int* data;
     int size;
 } ChildIdxCache;
 
+// Used to cache a series of merge instructions (either "merge with left
+// sibling" or "merge with right sibling")
 typedef struct MergeHintCache
 {
     BTreeNodeSib* data;
     int size;
 } MergeHintCache;
 
-typedef struct BtreeNodeSibCache
-{
-    bool refreshed;
-    BTreeNode* left;
-    BTreeNode* right;
-} BtreeNodeSibCache;
-
+// Determines which of `node`'s children is the root of a subtree containg `key`
 static int compute_child_idx(BTreeNode* node, int key, bool* found_key)
 {
     int child_idx = 0;
@@ -119,7 +151,7 @@ static bool btree_node_is_or_has_sib_over_min_cap(
     return false;
 }
 
-bool update_child_hint_cache(ChildIdxCache* cache, int idx, int val)
+static bool update_child_hint_cache(ChildIdxCache* cache, int idx, int val)
 {
     if (idx >= cache->size)
     {
@@ -139,7 +171,8 @@ bool update_child_hint_cache(ChildIdxCache* cache, int idx, int val)
     return true;
 }
 
-bool update_merge_hint_cache(MergeHintCache* cache, int idx, BTreeNodeSib val)
+static bool update_merge_hint_cache(
+    MergeHintCache* cache, int idx, BTreeNodeSib val)
 {
     if (idx >= cache->size)
     {
@@ -495,7 +528,7 @@ static bool update_vars(BTreeNode* ptr,
  *    - 0: Error
  *    - 1: OK
  */
-int btree_node_find_closest_over_min_cap_anc(BTreeNode* root,
+int btree_node_delete_key(BTreeNode* root,
     int key,
     BTreeNode** last_over_min_cap_anc_ptr,
     int* chain_end_child_idx_ptr,  // TODO: Rename
@@ -718,7 +751,7 @@ static void btree_node_merge_sibs(
     lsib->subtree_size += 1;
 
     btree_node_append_key_range(lsib, rsib, 0, rsib->curr_size);
-    lsib->subtree_size += rsib->subtree_size;
+    lsib->subtree_size += rsib->curr_size;
 
     btree_node_kill(rsib);
 
@@ -739,8 +772,8 @@ int btree_node_delete_impl(BTreeNode* root, int val, BTreeNode** new_root_ptr)
     BTreeNodeSib* merge_hint_cache = NULL;
     int chain_end_child_idx        = -1;
 
-    if (!btree_node_find_closest_over_min_cap_anc(root, val, &ptr,
-            &chain_end_child_idx, &merge_hint_cache, &child_idx_cache))
+    if (!btree_node_delete_key(root, val, &ptr, &chain_end_child_idx,
+            &merge_hint_cache, &child_idx_cache))
     {
         // TODO: Handle appropriately. This could be an OOM error or a
         // detected race condition.

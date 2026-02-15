@@ -135,4 +135,7 @@ void btree_node_copy_child_range(BTreeNode* to,
     int from_start,
     int num_children);
 
+void btree_node_append_child_range(
+    BTreeNode* to, BTreeNode* from, int from_start, int num_children);
+
 #endif

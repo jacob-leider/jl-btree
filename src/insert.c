@@ -1,5 +1,6 @@
 #include "./insert.h"
 
+#include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -8,38 +9,30 @@
 #include "./btree_settings.h"
 #include "./search.h"
 
-// Helper for btree_node_find_closest_nonfull_anc and
-// btree_node_find_closest_over_min_cap_anc Add child_idx to
-// local_child_idx_cache, resizing if necessary. Return the current pointer to
-// the cache.
-static int update_child_idx_cache(int** child_idx_cache,
-    int* child_idx_cache_size,
-    const int child_idx,
-    const int depth)
+typedef struct ChildIdxCache
 {
-    // Deref
-    int* local_child_idx_cache     = *child_idx_cache;
-    int local_child_idx_cache_size = *child_idx_cache_size;
+    int* data;
+    int size;
+} ChildIdxCache;
 
-    // Update cache
-    if (depth >= local_child_idx_cache_size)
+static bool update_child_hint_cache(ChildIdxCache* cache, int idx, int val)
+{
+    if (idx >= cache->size)
     {
-        // Resize
-        local_child_idx_cache_size *= 2;
-        int* new_local_child_idx_cache = (int*)realloc(
-            local_child_idx_cache, sizeof(int) * (local_child_idx_cache_size));
+        cache->size *= 2;
 
-        local_child_idx_cache = new_local_child_idx_cache;
-        if (!local_child_idx_cache) return 0;
+        int* new_data = (int*)realloc(cache->data, cache->size * sizeof(int));
+        if (!new_data)
+        {
+            return false;
+        }
+
+        cache->data = new_data;
     }
 
-    local_child_idx_cache[depth] = child_idx;
+    cache->data[idx] = val;
 
-    // Reref
-    *child_idx_cache      = local_child_idx_cache;
-    *child_idx_cache_size = local_child_idx_cache_size;
-
-    return 1;
+    return true;
 }
 
 // Child index will depend on which half of `ptr` the next ancestor belongs to
@@ -134,18 +127,21 @@ static int compute_child_idx(BTreeNode* node, int key, int* found_key)
 int btree_node_find_closest_nonfull_anc(const BTreeNode* root,
     const int key,
     const BTreeNode** last_nonfull_anc_ptr,
-    const int** child_idx_cache)
+    int** child_idx_cache_ptr)
 {
-    int* local_child_idx_cache =
-        (int*)malloc(DEFAULT_CHILD_IDX_CACHE_SIZE * sizeof(int));
-    int child_idx_cache_size = DEFAULT_CHILD_IDX_CACHE_SIZE;
+    ChildIdxCache child_idx_cache = {
+        .data = (int*)calloc(DEFAULT_CHILD_IDX_CACHE_SIZE, sizeof(int)),
+        .size = DEFAULT_CHILD_IDX_CACHE_SIZE};
+
     // Depth in the subtree rooted at last_nonfull_anc. Assume a depth of 1 in
     // case all ancestors are full. Otherwise, depth will be reset to zero.
     int depth = 1;
-    // Always zero because a new root is never split
-    int child_idx               = 0;
-    local_child_idx_cache[0]    = child_idx;
-
+    // Always starts at zero because a new root is never split
+    int child_idx = 0;
+    update_child_hint_cache(&child_idx_cache, 0, 0);
+    // We expect the caller to ensure the tree doesn't contain this key, but may
+    // handle this case better in the future
+    bool found_key              = 0;
     BTreeNode* ptr              = root;
     BTreeNode* last_nonfull_anc = NULL;
     while (!btree_node_is_leaf(ptr))
@@ -161,15 +157,20 @@ int btree_node_find_closest_nonfull_anc(const BTreeNode* root,
         }
 
         // Find the next ancestor
-        int found_key = 0;
-        child_idx     = compute_child_idx(ptr, key, &found_key);
-        if (found_key) return 0;
+        child_idx = compute_child_idx(ptr, key, &found_key);
+
+        if (found_key)
+        {
+            return 0;
+        }
 
         // Add child_idx to cache
-        if (!update_child_idx_cache(&local_child_idx_cache,
-                &child_idx_cache_size,
-                child_idx_after_split(ptr, key, child_idx), depth))
+        if (!update_child_hint_cache(&child_idx_cache, depth,
+                child_idx_after_split(ptr, key, child_idx)))
+        {
+            // OOM
             return 0;
+        }
 
         btree_node_intl_descend(&ptr, child_idx);
         depth += 1;
@@ -192,43 +193,10 @@ int btree_node_find_closest_nonfull_anc(const BTreeNode* root,
 #endif
 
     *last_nonfull_anc_ptr = last_nonfull_anc;
-    *child_idx_cache      = local_child_idx_cache;
+    *child_idx_cache_ptr  = child_idx_cache.data;
 
     return 1;
 }
-
-/**
- * @brief Finds the descendent of `root` and index of `root`'s keys of `key`.
- *
- * @par details
- *
- * @par Assumptions
- *    - A descendent of `root` contains `key`
- *
- * @param[in] root root of the tree
- * @param[in] key key we're finding
- * @param[out] node_ptr pointer to the descendent `node` of `root` containing
- * `key`.
- * Set to NULL if the tree doesn't contain `key`.
- * @param[out] key_idx_ptr pointer to the index of `node` where `key` exists
- * @param[out] last_over_min_cap_anc_ptr pointer to the last ancestor of `node`
- * with
- * more than `t` children
- * @param[out] num_min_cap_ancestors_ptr pointer to an integer that is the
- * number of
- * consecutive ancestors starting at `node` with `t` children
- * @param[in] inc_subtree_sizes flag that determines whether we increase the
- * subtree_size of each ancestor of `node`. Used for insertion operations.
- * WARNING: This should only be set if we're certain that the tree contains
- * `key`. TODO: Replace this with a `flags` field
- *
- * @return a return code
- *    - 0: Error
- *    - 1: Found `key`
- */
-// int btree_node_find_key(BTreeNode* root, int key, BTreeNode** node_ptr, int*
-// key_idx_ptr, BTreeNode** last_over_min_cap_anc_ptr, int*
-// num_min_cap_ancestors_ptr, int inc_subtree_sizes)
 
 /**
  * @brief Splits a node (subroutine for `btree_node_insert_impl`)
@@ -254,37 +222,38 @@ int btree_node_split(BTreeNode* node,
     int* next_key_ptr,
     const int key)
 {
-    const int size    = node->node_size;
-    const int l_start = size / 2;
-    const int r_start = l_start + 1;
+    const int size = node->node_size;
+    // size of left sibling after the split
+    const int new_left_size = size / 2;
 
     BTreeNode* rsib;
-    if (!btree_node_init(size, &rsib, node->children != NULL)) return 0;
+    if (!btree_node_init(size, &rsib, node->children != NULL))
+    {
+        // OOM
+        return 0;
+    }
 
-    *rsib_ptr          = rsib;
-    *next_key_ptr      = btree_node_get_key(node, l_start);
+    *rsib_ptr       = rsib;
+    *next_key_ptr   = btree_node_get_key(node, new_left_size);
 
-    node->curr_size    = l_start;
-    rsib->curr_size    = size - r_start;
+    node->curr_size = new_left_size;
 
-    rsib->subtree_size = rsib->curr_size;
+    btree_node_append_key_range(
+        rsib, node, new_left_size + 1, size - new_left_size - 1);
+    rsib->subtree_size += rsib->curr_size;
 
-    memcpy(rsib->keys, node->keys + r_start, rsib->curr_size * sizeof(int));
 #ifdef btree_keep_unused_mem_clean
-    memset(node->keys + l_start, 0, (size - l_start) * sizeof(int));
+    memset(node->keys + new_left_size, 0, (size - new_left_size) * sizeof(int));
 #endif
 
     if (!btree_node_is_leaf(node))
     {
-        for (int i = 0; i <= rsib->curr_size; i++)
-        {
-            btree_node_set_child(
-                rsib, i, btree_node_get_child(node, r_start + i));
-            rsib->subtree_size += btree_node_get_child(rsib, i)->subtree_size;
-        }
+        btree_node_append_child_range(
+            rsib, node, new_left_size + 1, rsib->curr_size + 1);
+
 #ifdef btree_keep_unused_mem_clean
-        memset(node->children + l_start + 1, 0,
-            (size - l_start + 1) * sizeof(BTreeNode*));
+        memset(node->children + new_left_size + 1, 0,
+            (size - new_left_size + 1) * sizeof(BTreeNode*));
 #endif
     }
 
