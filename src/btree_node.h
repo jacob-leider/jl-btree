@@ -18,7 +18,37 @@ struct BTreeNode
     int subtree_size;
 };
 
+#define btree_node_node_size(node) (node->node_size)
+
+#define btree_node_curr_size(node) (node->curr_size)
+#define btree_node_subtree_size(node) (node->subtree_size)
+#define btree_node_par(node) (node->par)
+
+#define btree_node_set_curr_size(node, new_curr_size) \
+    (node->curr_size = new_curr_size)
+#define btree_node_set_subtree_size(node, new_subtree_size) \
+    (node->subtree_size = new_subtree_size)
+#define btree_node_set_par(node, new_par) (node->par = new_par)
+
+// While this looks like overkill, these macros will get compiled down to
+// nothing, and make it easier to change the way we implement subtree
+// size/current size storage in the future
+#define btree_node_inc_subtree_size(node, inc) \
+    (btree_node_set_subtree_size(node, btree_node_subtree_size(node) + inc))
+#define btree_node_inc_subtree_size_1(node) \
+    (btree_node_inc_subtree_size(node, 1))
+#define btree_node_dec_subtree_size(node, dec) \
+    (btree_node_set_subtree_size(node, btree_node_subtree_size(node) - (dec)))
+#define btree_node_dec_subtree_size_1(node) \
+    (btree_node_dec_subtree_size(node, 1))
+#define btree_node_inc_curr_size(node) \
+    (btree_node_set_curr_size(node, btree_node_curr_size(node) + 1))
+#define btree_node_dec_curr_size(node) \
+    (btree_node_set_curr_size(node, btree_node_curr_size(node) - 1))
+
 // BTreeNode macros
+#define btree_node_is_root(node) (node->par == NULL)
+
 #define btree_node_is_empty(node) (node->curr_size == 0)
 
 #define btree_node_is_full(node) (node->curr_size == node->node_size)
@@ -137,5 +167,9 @@ void btree_node_copy_child_range(BTreeNode* to,
 
 void btree_node_append_child_range(
     BTreeNode* to, BTreeNode* from, int from_start, int num_children);
+
+void btree_node_clear_key_range(BTreeNode* node, int start, int num_keys);
+
+void btree_node_clear_child_range(BTreeNode* node, int start, int num_children);
 
 #endif

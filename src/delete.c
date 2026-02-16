@@ -68,12 +68,12 @@ static int compute_child_idx(BTreeNode* node, int key, bool* found_key)
     int child_idx = 0;
     *found_key    = 0;
 
-    if (btree_node_get_key(node, node->curr_size - 1) < key)
+    if (btree_node_get_key(node, btree_node_curr_size(node) - 1) < key)
     {
-        child_idx = node->curr_size;
+        child_idx = btree_node_curr_size(node);
     }
 #if REDUNDANT < 1
-    else if (btree_node_get_key(node, node->curr_size - 1) == key)
+    else if (btree_node_get_key(node, btree_node_curr_size(node) - 1) == key)
     {
         *found_key = 1;
     }
@@ -84,7 +84,8 @@ static int compute_child_idx(BTreeNode* node, int key, bool* found_key)
     }
     else
     {
-        child_idx = binary_search(node->keys, 0, node->curr_size, key);
+        child_idx =
+            binary_search(node->keys, 0, btree_node_curr_size(node), key);
 #if REDUNDANT < 1
         if (btree_node_get_key(node, child_idx) == key)
         {
@@ -128,10 +129,10 @@ static bool btree_node_is_or_has_sib_over_min_cap(
 
     // TODO: Fix this terminology in function names
     // Root and min capacity => not "over min capacity"
-    if (node->par == NULL)
+    if (btree_node_is_root(node))
     {
         // Minimum capacity for a root is 1
-        return node->curr_size > 1;
+        return btree_node_curr_size(node) > 1;
     }
 
     BTreeNode* left  = NULL;
@@ -212,7 +213,7 @@ BTreeNodeSib compute_merge_hint(BTreeNode* node, int child_idx)
         return NEITHER;
     }
 
-    if (node->par == NULL)
+    if (btree_node_is_root(node))
     {
         return UNDEFINED;
     }
@@ -241,7 +242,7 @@ BTreeNodeSib compute_rotate_hint(BTreeNode* node, int child_idx)
         return NEITHER;
     }
 
-    if (node->par == NULL)
+    if (btree_node_is_root(node))
     {
         return UNDEFINED;
     }
@@ -363,7 +364,7 @@ static bool update_vars(BTreeNode* ptr,
 
     // ALWAYS decrement this. The pred-leaf loses a key, and `ptr` will always
     // have the pred-leaf as a descendant.
-    ptr->subtree_size -= 1;
+    btree_node_dec_subtree_size_1(ptr);
 
     if (over_min_cap)
     {
@@ -393,9 +394,10 @@ static bool update_vars(BTreeNode* ptr,
         // after the next node, so no change to its child index.
         if (merge_cache_hint == LEFT)
         {
-            child_idx_after_merge =
-                child_idx +
-                btree_node_get_child(ptr->par, last_child_idx - 1)->curr_size;
+            BTreeNode* left_sib =
+                btree_node_get_child(btree_node_par(ptr), last_child_idx - 1);
+
+            child_idx_after_merge = child_idx + btree_node_curr_size(left_sib);
         }
     }
 
@@ -623,7 +625,7 @@ int btree_node_delete_key(BTreeNode* root,
         btree_node_set_key(c, child_idx, pred);
 #endif
 
-        child_idx = a->curr_size - 1;
+        child_idx = btree_node_curr_size(a) - 1;
     }
 
     // Update subtree sizes, update child index cache, and either merge hint
@@ -668,25 +670,21 @@ static void btree_node_rotate_left(
     int rsib_first_key = 0;
 
     btree_node_pop_front_key(rsib, &rsib_first_key);
-    rsib->subtree_size -= 1;
 
-    btree_node_push_back_key(lsib, btree_node_get_key(lsib->par, pivot_idx));
-    lsib->subtree_size += 1;
+    btree_node_push_back_key(
+        lsib, btree_node_get_key(btree_node_par(lsib), pivot_idx));
 
     if (!btree_node_is_leaf(lsib))
     {
         BTreeNode* rsib_first_child = NULL;
-
         btree_node_pop_front_child(rsib, &rsib_first_child);
-        rsib->subtree_size -= rsib_first_child->subtree_size;
 
         // TODO: rsib_first_child may be null. Check for this
 
-        btree_node_set_last_child(lsib, rsib_first_child);
-        lsib->subtree_size += rsib_first_child->subtree_size;
+        btree_node_push_back_child(lsib, rsib_first_child);
     }
 
-    btree_node_set_key(lsib->par, pivot_idx, rsib_first_key);
+    btree_node_set_key(btree_node_par(lsib), pivot_idx, rsib_first_key);
 }
 
 /**
@@ -704,25 +702,22 @@ static void btree_node_rotate_right(
     int lsib_last_val = 0;
 
     btree_node_pop_back_key(lsib, &lsib_last_val);
-    lsib->subtree_size -= 1;
 
-    btree_node_push_front_key(rsib, btree_node_get_key(rsib->par, pivot_idx));
-    rsib->subtree_size += 1;
+    btree_node_push_front_key(
+        rsib, btree_node_get_key(btree_node_par(rsib), pivot_idx));
 
     if (!btree_node_is_leaf(lsib))
     {
         BTreeNode* lsib_last_child = NULL;
 
         btree_node_pop_back_child(lsib, &lsib_last_child);
-        lsib->subtree_size -= lsib_last_child->subtree_size;
 
         // TODO: lsib_last_child may be null. Check for this
 
         btree_node_push_front_child(rsib, lsib_last_child);
-        rsib->subtree_size += lsib_last_child->subtree_size;
     }
 
-    btree_node_set_key(rsib->par, pivot_idx, lsib_last_val);
+    btree_node_set_key(btree_node_par(rsib), pivot_idx, lsib_last_val);
 }
 
 /**
@@ -737,23 +732,20 @@ static void btree_node_rotate_right(
  *   - `lsib` and `rsib` are either both leaves or both internal
  */
 static void btree_node_merge_sibs(
-    BTreeNode* lsib, BTreeNode* rsib, BTreeNode* par, int sep_idx)
+    BTreeNode* left, BTreeNode* right, BTreeNode* par, int sep_idx)
 {
-    // the pivot key, then `rsib`'s keys and (if `lsib` is internal) `rsib`'s
-    // children are appended to `lsib`
-    if (!btree_node_is_leaf(lsib))
+    // the pivot key, then `right`'s keys and (if `left` is internal) `right`'s
+    // children are appended to `left`
+    if (!btree_node_is_leaf(left))
     {
-        btree_node_copy_child_range(
-            lsib, rsib, lsib->curr_size + 1, 0, rsib->curr_size + 1);
+        btree_node_copy_child_range(left, right, btree_node_curr_size(left) + 1,
+            0, btree_node_curr_size(right) + 1);
     }
 
-    btree_node_push_back_key(lsib, btree_node_get_key(par, sep_idx));
-    lsib->subtree_size += 1;
+    btree_node_push_back_key(left, btree_node_get_key(par, sep_idx));
+    btree_node_append_key_range(left, right, 0, btree_node_curr_size(right));
 
-    btree_node_append_key_range(lsib, rsib, 0, rsib->curr_size);
-    lsib->subtree_size += rsib->curr_size;
-
-    btree_node_kill(rsib);
+    btree_node_kill(right);
 
     // Parent loses the pivot key, but its subtree size doens't change
     btree_node_remove_key(par, sep_idx);
@@ -762,6 +754,13 @@ static void btree_node_merge_sibs(
 
 int btree_node_delete_impl(BTreeNode* root, int val, BTreeNode** new_root_ptr)
 {
+#if REDUNDANT > 1
+    if (root == NULL)
+    {
+        return 0;
+    }
+#endif
+
     if (!btree_node_contains_key(root, val))
     {
         return 2;
@@ -834,7 +833,7 @@ int btree_node_delete_impl(BTreeNode* root, int val, BTreeNode** new_root_ptr)
         depth += 1;
 
         // Merge
-        BTreeNode* par = left->par;
+        BTreeNode* par = btree_node_par(left);
         int sep_idx    = 0;
         if (merge_hint_cache[depth] == LEFT)
         {

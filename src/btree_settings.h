@@ -6,4 +6,7 @@
 
 #define BTREE_DEBUG_1 0
 
+// TODO: Fix parts where we clear memory
+// #define BTREE_KEEP_UNUSED_MEM_CLEAN 1
+
 #endif

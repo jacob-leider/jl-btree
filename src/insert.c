@@ -39,7 +39,7 @@ static bool update_child_hint_cache(ChildIdxCache* cache, int idx, int val)
 static int child_idx_after_split(
     const BTreeNode* ptr, const int key, const int child_idx)
 {
-    const int mid = ptr->node_size / 2;
+    const int mid = btree_node_node_size(ptr) / 2;
     if (btree_node_is_full(ptr) && key > btree_node_get_key(ptr, mid))
         return child_idx - mid - 1;
 
@@ -51,8 +51,8 @@ static void update_subtree_sizes_upwards(
 {
     while (node != NULL && node != stop_at)
     {
-        node->subtree_size += inc;
-        node = node->par;
+        btree_node_inc_subtree_size(node, inc);
+        node = btree_node_par(node);
     }
 }
 
@@ -61,12 +61,12 @@ static int compute_child_idx(BTreeNode* node, int key, int* found_key)
     int child_idx = 0;
     *found_key    = 0;
 
-    if (btree_node_get_key(node, node->curr_size - 1) < key)
+    if (btree_node_get_key(node, btree_node_curr_size(node) - 1) < key)
     {
-        child_idx = node->curr_size;
+        child_idx = btree_node_curr_size(node);
     }
 #if REDUNDANT < 1
-    else if (btree_node_get_key(node, node->curr_size - 1) == key)
+    else if (btree_node_get_key(node, btree_node_curr_size(node) - 1) == key)
     {
         *found_key = 1;
     }
@@ -77,7 +77,8 @@ static int compute_child_idx(BTreeNode* node, int key, int* found_key)
     }
     else
     {
-        child_idx = binary_search(node->keys, 0, node->curr_size, key);
+        child_idx =
+            binary_search(node->keys, 0, btree_node_curr_size(node), key);
 #if REDUNDANT < 1
         if (btree_node_get_key(node, child_idx) == key)
         {
@@ -185,8 +186,9 @@ int btree_node_find_closest_nonfull_anc(const BTreeNode* root,
     }
 
 #if REDUNDANT < 1
-    if (key ==
-        btree_node_get_key(ptr, find_idx_of_min_key_greater_than_val(ptr, key)))
+    // TODO: find_idx... is broken
+    if (key == btree_node_get_key(ptr,
+                   binary_search(ptr->keys, 0, btree_node_curr_size(ptr), key)))
     {
         return 0;
     }
@@ -222,28 +224,27 @@ int btree_node_split(BTreeNode* node,
     int* next_key_ptr,
     const int key)
 {
-    const int size = node->node_size;
+    const int size = btree_node_node_size(node);
     // size of left sibling after the split
     const int new_left_size = size / 2;
 
     BTreeNode* rsib;
-    if (!btree_node_init(size, &rsib, node->children != NULL))
+    if (!btree_node_init(size, &rsib, !btree_node_is_leaf(node)))
     {
         // OOM
         return 0;
     }
 
-    *rsib_ptr       = rsib;
-    *next_key_ptr   = btree_node_get_key(node, new_left_size);
+    *rsib_ptr     = rsib;
+    *next_key_ptr = btree_node_get_key(node, new_left_size);
 
-    node->curr_size = new_left_size;
+    btree_node_set_curr_size(node, new_left_size);
 
     btree_node_append_key_range(
         rsib, node, new_left_size + 1, size - new_left_size - 1);
-    rsib->subtree_size += rsib->curr_size;
 
-#ifdef btree_keep_unused_mem_clean
-    memset(node->keys + new_left_size, 0, (size - new_left_size) * sizeof(int));
+#ifdef BTREE_KEEP_UNUSED_MEM_CLEAN
+    btree_node_clear_key_range(node, new_left_size, size - new_left_size);
 #endif
 
     if (!btree_node_is_leaf(node))
@@ -251,13 +252,14 @@ int btree_node_split(BTreeNode* node,
         btree_node_append_child_range(
             rsib, node, new_left_size + 1, rsib->curr_size + 1);
 
-#ifdef btree_keep_unused_mem_clean
-        memset(node->children + new_left_size + 1, 0,
-            (size - new_left_size + 1) * sizeof(BTreeNode*));
+#ifdef BTREE_KEEP_UNUSED_MEM_CLEAN
+        btree_node_clear_child_range(
+            node, new_left_size + 1, size - new_left_size + 1);
 #endif
     }
 
-    node->subtree_size -= rsib->subtree_size + 1;  // +1 for separation key
+    btree_node_dec_subtree_size(
+        node, btree_node_subtree_size(rsib) + 1);  // +1 for separation key
 
     return 1;
 }
@@ -310,13 +312,13 @@ int btree_node_insert_impl(
     // are full
     if (a == NULL)
     {
-        if (!btree_node_init(root->node_size, &a, 1)) return 0;
+        if (!btree_node_init(btree_node_node_size(root), &a, 1)) return 0;
 
         btree_node_set_first_child(a, root);
         // +1 because btree_node_find_closest_nonfull_anc didn't increment any
         // subtree sizes as all ancestors were full
-        a->subtree_size = root->subtree_size + 1;
-        *new_root_ptr   = a;
+        btree_node_set_subtree_size(a, btree_node_subtree_size(root) + 1);
+        *new_root_ptr = a;
     }
 
     // Insertion proceeds top-down from the first non-full ancestor of the leaf
@@ -337,7 +339,7 @@ int btree_node_insert_impl(
 
         // Descend
         a = key < k ? b1 : b2;
-        a->subtree_size += 1;  // for `key`
+        btree_node_inc_subtree_size_1(a);  // for `key`
         depth += 1;
     }
 

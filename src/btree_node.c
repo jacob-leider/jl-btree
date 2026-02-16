@@ -255,7 +255,7 @@ void btree_node_remove_key(BTreeNode* node, int idx)
             (node->curr_size - 1 - idx) * sizeof(int));
     }
     node->curr_size -= 1;
-#ifdef btree_keep_unused_mem_clean
+#ifdef BTREE_KEEP_UNUSED_MEM_CLEAN
     btree_node_set_last_key(node, 0);
 #endif
 }
@@ -264,7 +264,7 @@ void btree_node_remove_key(BTreeNode* node, int idx)
 void btree_node_remove_child(BTreeNode* node, int idx)
 {
     btree_node_shift_children(node, idx + 1, node->curr_size - idx + 1, -1);
-#ifdef btree_keep_unused_mem_clean
+#ifdef BTREE_KEEP_UNUSED_MEM_CLEAN
     btree_node_set_child(node, node->curr_size + 1, NULL);
 #endif
 }
@@ -322,6 +322,8 @@ void btree_node_push_front_key(BTreeNode* node, int key)
 #endif
     memmove(node->keys + 1, node->keys, (node->curr_size - 1) * sizeof(int));
     btree_node_set_first_key(node, key);
+
+    node->subtree_size += 1;
 }
 
 // Shift children right and sets first child
@@ -329,6 +331,15 @@ void btree_node_push_front_child(BTreeNode* node, BTreeNode* child)
 {
     btree_node_shift_children(node, 0, node->curr_size, 1);
     btree_node_set_first_child(node, child);
+
+#if REDUNDANT > 1
+    if (child != NULL)
+    {
+#endif
+        node->subtree_size += child->subtree_size;
+#if REDUNDANT > 1
+    }
+#endif
 }
 
 // Stores first key in `key` and shifts all other keys left
@@ -340,16 +351,29 @@ void btree_node_pop_front_key(BTreeNode* node, int* key)
     {
         memmove(node->keys, node->keys + 1, node->curr_size * sizeof(int));
     }
+
+    node->subtree_size -= 1;
 }
 
 // Stores first child in `child` and shifts all other children left
-void btree_node_pop_front_child(BTreeNode* node, BTreeNode** child)
+void btree_node_pop_front_child(BTreeNode* node, BTreeNode** child_ptr)
 {
-    *child = btree_node_get_first_child(node);
+    BTreeNode* child = btree_node_get_first_child(node);
     btree_node_shift_children(node, 1, node->curr_size + 1, -1);
-#ifdef btree_keep_unused_mem_clean
+#ifdef BTREE_KEEP_UNUSED_MEM_CLEAN
     btree_node_set_child(node, node->curr_size + 1, NULL);
 #endif
+
+#if REDUNDANT > 1
+    if (child != NULL)
+    {
+#endif
+        node->subtree_size -= child->subtree_size;
+#if REDUNDANT > 1
+    }
+#endif
+
+    *child_ptr = child;
 }
 
 // Sets last key (redundant!)
@@ -357,12 +381,23 @@ void btree_node_push_back_key(BTreeNode* node, int key)
 {
     node->curr_size += 1;
     btree_node_set_last_key(node, key);
+
+    node->subtree_size += 1;
 }
 
 // Sets last child (redundant!)
 void btree_node_push_back_child(BTreeNode* node, BTreeNode* child)
 {
     btree_node_set_last_child(node, child);
+
+#if REDUNDANT > 1
+    if (child != NULL)
+    {
+#endif
+        node->subtree_size += child->subtree_size;
+#if REDUNDANT > 1
+    }
+#endif
 }
 
 // Stores last key in `key` and erases it
@@ -370,18 +405,31 @@ void btree_node_pop_back_key(BTreeNode* node, int* key)
 {
     node->curr_size -= 1;
     *key = btree_node_get_key(node, node->curr_size);
-#ifdef btree_keep_unused_mem_clean
+#ifdef BTREE_KEEP_UNUSED_MEM_CLEAN
     btree_node_set_key(node, node->curr_size, 0);
 #endif
+
+    node->subtree_size -= 1;
 }
 
 // Stores last child in `child` and erases it
-void btree_node_pop_back_child(BTreeNode* node, BTreeNode** child)
+void btree_node_pop_back_child(BTreeNode* node, BTreeNode** child_ptr)
 {
-    *child = btree_node_get_child(node, node->curr_size + 1);
-#ifdef btree_keep_unused_mem_clean
+    BTreeNode* child = btree_node_get_child(node, node->curr_size + 1);
+#ifdef BTREE_KEEP_UNUSED_MEM_CLEAN
     btree_node_set_child(node, node->curr_size + 1, NULL);
 #endif
+
+#if REDUNDANT > 1
+    if (child != NULL)
+    {
+#endif
+        node->subtree_size -= child->subtree_size;
+#if REDUNDANT > 1
+    }
+#endif
+
+    *child_ptr = child;
 }
 
 void btree_node_copy_key_range(
@@ -396,6 +444,7 @@ void btree_node_append_key_range(
 {
     btree_node_copy_key_range(to, from, to->curr_size, from_start, num_keys);
     to->curr_size += num_keys;
+    to->subtree_size += num_keys;
 }
 
 void btree_node_copy_child_range(BTreeNode* to,
@@ -408,6 +457,7 @@ void btree_node_copy_child_range(BTreeNode* to,
     {
         btree_node_set_child(
             to, to_start + i, btree_node_get_child(from, from_start + i));
+
         to->subtree_size +=
             btree_node_get_child(to, to_start + i)->subtree_size;
     }
@@ -419,6 +469,17 @@ void btree_node_append_child_range(
     for (int i = 0; i < num_children; i++)
     {
         btree_node_set_child(to, i, btree_node_get_child(from, from_start + i));
+
         to->subtree_size += btree_node_get_child(to, i)->subtree_size;
     }
+}
+
+void btree_node_clear_key_range(BTreeNode* node, int start, int num_keys)
+{
+    memset(node->keys + start, 0, num_keys * sizeof(int));
+}
+
+void btree_node_clear_child_range(BTreeNode* node, int start, int num_children)
+{
+    memset(node->children + start, 0, num_children * sizeof(BTreeNode*));
 }
