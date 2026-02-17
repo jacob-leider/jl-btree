@@ -31,25 +31,25 @@ int btree_node_is_valid_partial(BTreeNode* node, char** err_msg)
         return 0;
     }
 
-    if (node->node_size <= 0)
+    if (btree_node_node_size(node) <= 0)
     {
         *err_msg = "negative capacity";
         return 0;
     }
 
-    if (node->curr_size < 0)
+    if (btree_node_curr_size(node) < 0)
     {
         *err_msg = "negative curr_size";
         return 0;
     }
 
-    if (node->curr_size > node->node_size)
+    if (btree_node_curr_size(node) > btree_node_node_size(node))
     {
         *err_msg = "data overflow";
         return 0;
     }
 
-    for (int i = 1; i < node->curr_size; i++)
+    for (int i = 1; i < btree_node_curr_size(node); i++)
     {
         if (btree_node_get_key(node, i) < btree_node_get_key(node, i - 1))
         {
@@ -70,15 +70,15 @@ typedef struct SubtreeSizeTest
 SubtreeSizeTest btree_check_subtree_sizes_impl(BTreeNode* root)
 {
     SubtreeSizeTest t = {0, 0};
-    if (root->is_leaf)
+    if (btree_node_is_leaf(root))
     {
-        t.passed                = root->curr_size == root->subtree_size;
-        t.computed_subtree_size = root->curr_size;
+        t.passed = btree_node_curr_size(root) == btree_node_subtree_size(root);
+        t.computed_subtree_size = btree_node_curr_size(root);
         return t;
     }
 
-    int computed_subtree_size = root->curr_size;
-    for (int i = 0; i <= root->curr_size; i++)
+    int computed_subtree_size = btree_node_curr_size(root);
+    for (int i = 0; i <= btree_node_curr_size(root); i++)
     {
         SubtreeSizeTest t =
             btree_check_subtree_sizes_impl(btree_node_get_child(root, i));
@@ -87,15 +87,15 @@ SubtreeSizeTest btree_check_subtree_sizes_impl(BTreeNode* root)
             // fail (remove this later on)
             BTreeNode* child = btree_node_get_child(root, i);
             printf("(child %d) Expected: %d, Computed: %d\n", i + 1,
-                child->subtree_size, t.computed_subtree_size);
+                btree_node_subtree_size(child), t.computed_subtree_size);
             printf("Child: ");
-            printArr(child->keys, child->curr_size);
+            printArr(child->keys, btree_node_curr_size(child));
             return t;
         }
         computed_subtree_size += t.computed_subtree_size;
     }
 
-    t.passed                = computed_subtree_size == root->subtree_size;
+    t.passed = computed_subtree_size == btree_node_subtree_size(root);
     t.computed_subtree_size = computed_subtree_size;
     return t;
 }
@@ -103,8 +103,8 @@ SubtreeSizeTest btree_check_subtree_sizes_impl(BTreeNode* root)
 int btree_check_subtree_sizes(BTreeNode* root)
 {
     SubtreeSizeTest t = btree_check_subtree_sizes_impl(root);
-    // printf("Res - Expected: %d, Computed: %d\n", root->subtree_size,
-    // t.computed_subtree_size);
+    // printf("Res - Expected: %d, Computed: %d\n",
+    // btree_node_subtree_size(root), t.computed_subtree_size);
     return t.passed;
 }
 
@@ -113,12 +113,12 @@ int btree_size(BTreeNode* root)
     if (!root) return 0;
 
     int size = 0;
-    for (int idx = 0; idx <= root->curr_size; idx++)
+    for (int idx = 0; idx <= btree_node_curr_size(root); idx++)
     {
         size += btree_size(btree_node_get_child(root, idx));
     }
 
-    return size + root->curr_size;
+    return size + btree_node_curr_size(root);
 }
 
 static int btree_cmp_r(BTreeNode* a, BTreeNode* b)
@@ -146,41 +146,43 @@ static int btree_cmp_r(BTreeNode* a, BTreeNode* b)
     }
 
     // printf("a: ");
-    // printArr(a->keys, a->curr_size);
+    // printArr(a->keys, btree_node_curr_size(a));
     // printf("b: ");
-    // printArr(b->keys, b->curr_size);
+    // printArr(b->keys, btree_node_curr_size(b));
 
-    if (a->node_size != b->node_size)
+    if (btree_node_node_size(a) != btree_node_node_size(b))
     {
         return 0;
     }
 
-    if (a->curr_size != b->curr_size)
+    if (btree_node_curr_size(a) != btree_node_curr_size(b))
     {
         printf("WRONG CURR SIZE\n");
         return 0;
     }
 
-    if (a->is_leaf != b->is_leaf)
+    if (btree_node_is_leaf(a) != btree_node_is_leaf(b))
     {
         printf("LEAF VS. NON-LEAF");
         return 0;
     }
 
-    if (a->subtree_size != b->subtree_size)
+    if (btree_node_subtree_size(a) != btree_node_subtree_size(b))
     {
-        printf("This node (a) has subtree size %d:\n\t", a->subtree_size);
-        printArr(a->keys, a->curr_size);
-        printf("This node (b) has subtree size %d:\n\t", b->subtree_size);
-        printArr(b->keys, b->curr_size);
+        printf("This node (a) has subtree size %d:\n\t",
+            btree_node_subtree_size(a));
+        printArr(a->keys, btree_node_curr_size(a));
+        printf("This node (b) has subtree size %d:\n\t",
+            btree_node_subtree_size(b));
+        printArr(b->keys, btree_node_curr_size(b));
 
         return 0;
     }
 
     // Neither are NULL
-    for (int idx = 0; idx < a->curr_size; idx++)
+    for (int idx = 0; idx < btree_node_curr_size(a); idx++)
     {
-        if (!a->is_leaf && !b->is_leaf)
+        if (!btree_node_is_leaf(a) && !btree_node_is_leaf(b))
         {
             if (!btree_cmp_r(
                     btree_node_get_child(a, idx), btree_node_get_child(b, idx)))
@@ -197,7 +199,7 @@ static int btree_cmp_r(BTreeNode* a, BTreeNode* b)
     }
 
     // last key
-    if (!a->is_leaf && !b->is_leaf)
+    if (!btree_node_is_leaf(a) && !btree_node_is_leaf(b))
     {
         if (!btree_cmp_r(
                 btree_node_get_last_child(a), btree_node_get_last_child(b)))
@@ -218,14 +220,14 @@ int btree_cmp(BTreeNode* a, BTreeNode* b)
 // DE-RECURSIVIZE (A)
 static int btree_subtree_in_order_traverse_r(BTreeNode* root)
 {
-    for (int i = 0; i < root->curr_size; i++)
+    for (int i = 0; i < btree_node_curr_size(root); i++)
     {
-        if (!root->is_leaf)
+        if (!btree_node_is_leaf(root))
             btree_subtree_in_order_traverse_r(btree_node_get_child(root, i));
         printf("%d, ", btree_node_get_key(root, i));
     }
 
-    if (!root->is_leaf)
+    if (!btree_node_is_leaf(root))
         btree_subtree_in_order_traverse_r(btree_node_get_last_child(root));
 
     return 1;

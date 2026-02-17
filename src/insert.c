@@ -229,7 +229,11 @@ int btree_node_split(BTreeNode* node,
     const int new_left_size = size / 2;
 
     BTreeNode* rsib;
-    if (!btree_node_init(size, &rsib, !btree_node_is_leaf(node)))
+    if (!btree_node_init(
+#ifndef BTREE_NODE_NODE_SIZE
+            size,
+#endif
+            &rsib, !btree_node_is_leaf(node)))
     {
         // OOM
         return 0;
@@ -312,7 +316,12 @@ int btree_node_insert_impl(
     // are full
     if (a == NULL)
     {
-        if (!btree_node_init(btree_node_node_size(root), &a, 1)) return 0;
+        if (!btree_node_init(
+#ifndef BTREE_NODE_NODE_SIZE
+                btree_node_node_size(root),
+#endif
+                &a, 1))
+            return 0;
 
         btree_node_set_first_child(a, root);
         // +1 because btree_node_find_closest_nonfull_anc didn't increment any

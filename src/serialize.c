@@ -90,7 +90,7 @@ static int StrFromTreeR(BTreeNode* root, String* string)
 {
     if (!str_append(string, "(", 1)) return 0;
 
-    for (int i = 0; i < root->curr_size; i++)
+    for (int i = 0; i < btree_node_curr_size(root); i++)
     {
         if (!btree_node_is_leaf(root))
         {
@@ -101,7 +101,7 @@ static int StrFromTreeR(BTreeNode* root, String* string)
                 printf("child %d of current node is null. Current node:\n", i);
                 btree_node_print(root);
 
-                for (int j = i + 1; j <= root->curr_size; j++)
+                for (int j = i + 1; j <= btree_node_curr_size(root); j++)
                 {
                     BTreeNode* sib = btree_node_get_child(root, j);
                     if (sib == NULL)
@@ -111,7 +111,7 @@ static int StrFromTreeR(BTreeNode* root, String* string)
                     else
                     {
                         printf(" -- Child %d is NOT null: ", j);
-                        printArr(sib->keys, sib->curr_size);
+                        printArr(sib->keys, btree_node_curr_size(sib));
                     }
                 }
 
@@ -139,7 +139,7 @@ static int StrFromTreeR(BTreeNode* root, String* string)
                         i + 1);
                     btree_node_print(root);
 
-                    for (int j = i + 2; j <= root->curr_size; j++)
+                    for (int j = i + 2; j <= btree_node_curr_size(root); j++)
                     {
                         BTreeNode* sib = btree_node_get_child(root, j);
                         if (sib == NULL)
@@ -149,7 +149,7 @@ static int StrFromTreeR(BTreeNode* root, String* string)
                         else
                         {
                             printf(" -- Child %d is NOT null: ", j);
-                            printArr(sib->keys, sib->curr_size);
+                            printArr(sib->keys, btree_node_curr_size(sib));
                         }
                     }
                     return 0;
@@ -157,7 +157,7 @@ static int StrFromTreeR(BTreeNode* root, String* string)
             }
         }
 
-        if (i < root->curr_size - 1 || !btree_node_is_leaf(root))
+        if (i < btree_node_curr_size(root) - 1 || !btree_node_is_leaf(root))
         {
             if (!str_append_space(string)) return 0;
         }
@@ -172,7 +172,7 @@ static int StrFromTreeR(BTreeNode* root, String* string)
             {
                 printf("SERIALIZATION ERROR\n");
                 printf("child %d of current node is null. Current node:\n",
-                    root->curr_size);
+                    btree_node_curr_size(root));
                 btree_node_print(root);
                 return 0;
             }
@@ -495,7 +495,11 @@ int TreeFromStr(const char* str,
     }
 
     BTreeNode* root = NULL;
-    if (!btree_node_init(settings->node_size, &root, 0))
+    if (!btree_node_init(
+#ifndef BTREE_NODE_NODE_SIZE
+            settings->node_size,
+#endif
+            &root, 0))
     {
         return 0;
     }
@@ -518,15 +522,20 @@ int TreeFromStr(const char* str,
             }
 
             BTreeNode* child;
-            if (!btree_node_init(settings->node_size, &child, 0)) return 0;
+            if (!btree_node_init(
+#ifndef BTREE_NODE_NODE_SIZE
+                    settings->node_size,
+#endif
+                    &child, 0))
+                return 0;
 
-            child->par                    = ptr;
-            ptr->children[ptr->curr_size] = child;
-            ptr                           = child;
+            btree_node_set_par(child, ptr);
+            btree_node_set_child(ptr, btree_node_curr_size(ptr), child);
+            ptr = child;
         }
         else if (type == RPAREN)
         {
-            if (ptr->par == NULL)
+            if (btree_node_is_root(ptr))
             {
                 printf(
                     "Deserialization error. Details:\n\t- Too many closing "
@@ -534,20 +543,21 @@ int TreeFromStr(const char* str,
                 return 0;
             }
 
-            ptr->par->subtree_size += ptr->subtree_size;
-            ptr = ptr->par;
+            BTreeNode* par = btree_node_par(ptr);
+            btree_node_inc_subtree_size(par, btree_node_subtree_size(ptr));
+            ptr = par;
         }
         else if (type == NUMBER)
         {
-            if (ptr->curr_size == ptr->node_size)
+            if (btree_node_is_full(ptr))
             {
                 printf("Deserialization error. Details:\n\t- Overfull node\n");
                 return 0;
             }
 
-            ptr->keys[ptr->curr_size] = val;
-            ptr->curr_size += 1;
-            ptr->subtree_size += 1;
+            btree_node_set_key(ptr, btree_node_curr_size(ptr), val);
+            btree_node_inc_curr_size_1(ptr);
+            btree_node_inc_subtree_size_1(ptr);
         }
         else
         {
@@ -557,86 +567,5 @@ int TreeFromStr(const char* str,
 
     *root_ptr = root;
 
-    return 1;
-}
-
-int TreeFromArr(int* vals, int num_vals, int node_size, BTreeNode** root_ptr)
-{
-    BTreeNode* root;
-    if (!btree_node_init(node_size, &root, 1))
-    {
-        printf("Failed to fill tree (Line %d)\n", __LINE__);
-        return 0;
-    }
-
-    int vals_idx = 0, lvl_size = 1;
-    BTreeNode** lvl = (BTreeNode**)malloc(sizeof(BTreeNode*));
-    if (!lvl)
-    {
-        printf("Mallocn't\n");
-        return 0;
-    }
-
-    lvl[0] = root;
-
-    while (vals_idx < num_vals)
-    {
-        // Fill nodes in current lvl
-        for (int idx = 0; idx < lvl_size; idx++)
-        {
-            // fill lvl[i]
-            int num_vals_to_cpy = min(num_vals - vals_idx, node_size);
-
-            memcpy(
-                lvl[idx]->keys, vals + vals_idx, num_vals_to_cpy * sizeof(int));
-            lvl[idx]->curr_size = num_vals_to_cpy;
-            vals_idx += num_vals_to_cpy;
-        }
-
-        // Add children for this lvl. How many do we need? It's OK if this part
-        // runs when num_vals = idx. Make sure num_children_needed is
-        // nonnegative so we don't steal the entire heap
-        int next_lvl_size = lvl_size * (node_size + 1);
-        int num_children_needed =
-            max(min((num_vals - vals_idx) / node_size, next_lvl_size), 0);
-
-        // Create next lvl
-        BTreeNode** next_lvl =
-            (BTreeNode**)malloc(num_children_needed * sizeof(BTreeNode*));
-        if (!next_lvl)
-        {
-            printf("Mallocn't\n");
-            return 0;
-        }
-
-        int par_idx = 0, key_idx = 0;
-        for (int child_idx = 0; child_idx < num_children_needed;
-            child_idx++, key_idx++)
-        {
-            if (key_idx == node_size + 1)
-            {
-                key_idx = 0;
-                par_idx += 1;
-            }
-
-            BTreeNode* node;
-            if (!btree_node_init(node_size, &node, 1))
-            {
-                printf("Failed to fill tree (Line %d)\n", __LINE__);
-                return 0;
-            }
-
-            node->par             = lvl[par_idx];
-            next_lvl[child_idx]   = node;
-            lvl[par_idx]->is_leaf = 0;  // This should really be moved
-            btree_node_set_child(lvl[par_idx], key_idx, node);
-        }
-
-        free(lvl);
-        lvl      = next_lvl;
-        lvl_size = num_children_needed;
-    }
-
-    *root_ptr = root;
     return 1;
 }

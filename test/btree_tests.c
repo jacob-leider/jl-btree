@@ -28,6 +28,14 @@ void PrintPass(int test_num, const char* test_name)
         test_num);
 }
 
+void PrintSkip(int test_num, const char* test_name)
+{
+    char test_name_in_quotes[100];
+    sprintf(test_name_in_quotes, "\"%s\"", test_name);
+    printf("\t- Test %-20s [%d]: " YELLOW "Skipped\n" RESET,
+        test_name_in_quotes, test_num);
+}
+
 void PrintFail(int test_num, int res, int exp)
 {
     printf("Test %d: " RED "Failed\n\tRes: %d\n\tExp: %d\n" RESET, test_num,
@@ -95,152 +103,20 @@ typedef struct InsertTestCase
     int exp_rc;
 } InsertTestCase;
 
-int BuildInsertTestCase(InsertTestCase* test_case, int test_num)
+void PrintTestStats(int passed, int skipped, int total)
 {
-    char path[100];
-    sprintf(path, "./test/cases/%s/case%d.json", "insert", test_num);
-    FILE* fctr = fopen(path, "r");
-    FILE* fptr = fopen(path, "r");
-
-    if (fctr == NULL) return 0;
-
-    int len = 0;
-    char c;
-    while ((c = fgetc(fctr)) != EOF)
-    {
-        len += 1;
-    }
-
-    char* test_case_str = (char*)malloc((len + 1) * sizeof(char));
-
-    int i               = 0;
-    while ((c = fgetc(fptr)) != EOF)
-    {
-        test_case_str[i] = c;
-        i++;
-    }
-
-    int in_str       = 0;
-    int depth        = 0;
-    int str_start    = 0;
-    int kw_start     = 0;
-    int in_kw        = 0;
-    int str_size     = 0;
-    int kw_size      = 0;
-    int in_quote     = 0;
-    int before_colon = 1;
-
-    for (int i = 0; i < len; i++)
-    {
-        c = test_case_str[i];
-
-        if (c == '{')
-        {
-            depth += 1;
-        }
-        else if (c == '}')
-        {
-            depth -= 1;
-        }
-        else if (c == '"')
-        {
-            if (in_quote)
-            {
-                if (before_colon)
-                {
-                    // in keyword
-                }
-                else
-                {
-                    // in value
-                }
-            }
-            else
-            {
-                in_quote = 1;
-            }
-
-            if (in_kw)
-            {
-                // TODO: copy word from str_start to str_start + str_size
-
-                if (kw_size == strlen("before") &&
-                    strncmp(test_case_str + kw_start, "before", kw_size))
-                {
-                    printf("before found\n");
-                }
-                else if (kw_size == strlen("after") &&
-                         strncmp(test_case_str + kw_start, "after", kw_size))
-                {
-                    printf("after found\n");
-                }
-                else if (kw_size == strlen("node size") &&
-                         strncmp(
-                             test_case_str + kw_start, "node size", kw_size))
-                {
-                    printf("node size found\n");
-                }
-                else if (kw_size == strlen("exp rc") &&
-                         strncmp(test_case_str + kw_start, "exp rc", kw_size))
-                {
-                    printf("exp rc found\n");
-                }
-                else
-                {
-                    printf("%s found\n", test_case_str + kw_start);
-                }
-
-                in_kw = 0;
-            }
-            else if (in_str)
-            {
-                // Get string
-                in_str = 0;
-            }
-            else
-            {
-                if (in_kw)
-                {
-                    kw_start = i + 1;
-                    kw_size  = 0;
-                }
-                else
-                {
-                    str_start = i + 1;
-                    str_size  = 0;
-                }
-
-                in_str = 1;
-            }
-        }
-        else if (c == ':')
-        {
-            before_colon = 0;
-        }
-        else if (c == ',')
-        {
-            before_colon = 1;
-        }
-
-        kw_size += 1;
-        str_size += 1;
-    }
-
-    // Close the file
-    fclose(fctr);
-    fclose(fptr);
-    free(test_case_str);
-    return 1;
-}
-
-void PrintTestStats(int passed, int total)
-{
-    printf(RESET "\nResults:%s%s %d / %d Tests Passed\n%s%s", COLOR_BOLD, GREEN,
-        passed, total, RESET, COLOR_OFF);
+    printf("\n%sResults:%s\n", COLOR_BOLD, RESET);
+    printf("\t%s %d / %d Tests Passed%s%s\n", GREEN, passed, total, RESET,
+        COLOR_OFF);
+    printf("\t%s %d / %d Tests Skipped%s%s\n", YELLOW, skipped, total, RESET,
+        COLOR_OFF);
+    printf("\t%s %d / %d Tests Failed%s%s\n", RED, total - passed - skipped,
+        total, RESET, COLOR_OFF);
 }
 
 int TestBTreeNodeInsertImplCase(int* test_num,
     int* num_passed,
+    int* num_skipped,
     const char* test_name,
     int node_size,
     const char* before_str,
@@ -248,13 +124,22 @@ int TestBTreeNodeInsertImplCase(int* test_num,
     const char* exp_after_str,
     int exp_rc)
 {
+    *test_num += 1;
+
+#ifdef BTREE_NODE_NODE_SIZE
+    if (BTREE_NODE_NODE_SIZE != node_size)
+    {
+        *num_skipped += 1;
+        PrintSkip(*test_num, test_name);
+        return 1;
+    }
+#endif
     // InsertTestCase test_case;
     // BuildInsertTestCase(&test_case, 1);
 
     DeserializationSettings settings = {
         .node_size = node_size, .lexer_settings = NULL};
 
-    *test_num += 1;
     BTreeNode *before = NULL, *exp_after = NULL;
     if (!TreeFromStr(before_str, strlen(before_str), &settings, &before) ||
         !TreeFromStr(
@@ -297,7 +182,7 @@ int TestBTreeNodeInsertImplCase(int* test_num,
 
 int TestBTreeNodeInsertImpl()
 {
-    int test_num = 0, num_passed = 0;
+    int test_num = 0, num_passed = 0, num_skipped = 0;
 
     // 1. `key` is in the tree.
     // 2. `leaf` is full
@@ -321,8 +206,8 @@ int TestBTreeNodeInsertImpl()
 
         int val = 10, exp_rc = 2;
 
-        if (!TestBTreeNodeInsertImplCase(&test_num, &num_passed, test_name,
-                size, before_str, val, after_str, exp_rc))
+        if (!TestBTreeNodeInsertImplCase(&test_num, &num_passed, &num_skipped,
+                test_name, size, before_str, val, after_str, exp_rc))
         {
             return TestDidntExecute(test_num);
         }
@@ -352,8 +237,8 @@ int TestBTreeNodeInsertImpl()
             "233)) 300 ((301 302 303) 310 (311 312 313) 320 (321 322 323) 330 "
             "(331 332 333))";
 
-        if (!TestBTreeNodeInsertImplCase(&test_num, &num_passed, test_name,
-                size, before_str, val, after_str, exp_rc))
+        if (!TestBTreeNodeInsertImplCase(&test_num, &num_passed, &num_skipped,
+                test_name, size, before_str, val, after_str, exp_rc))
         {
             return TestDidntExecute(test_num);
         }
@@ -383,8 +268,8 @@ int TestBTreeNodeInsertImpl()
             "3020 3030) 3100 (3110 3120 3130) 3200 (3210 3220 3230) 3300 (3310 "
             "3320 3330))";
 
-        if (!TestBTreeNodeInsertImplCase(&test_num, &num_passed, test_name,
-                size, before_str, val, after_str, exp_rc))
+        if (!TestBTreeNodeInsertImplCase(&test_num, &num_passed, &num_skipped,
+                test_name, size, before_str, val, after_str, exp_rc))
         {
             return TestDidntExecute(test_num);
         }
@@ -411,8 +296,8 @@ int TestBTreeNodeInsertImpl()
             "3020 3030) 3100 (3110 3120 3130) 3200 (3210 3220 3230) 3300 (3310 "
             "3320 3330))";
 
-        if (!TestBTreeNodeInsertImplCase(&test_num, &num_passed, test_name,
-                size, before_str, val, after_str, exp_rc))
+        if (!TestBTreeNodeInsertImplCase(&test_num, &num_passed, &num_skipped,
+                test_name, size, before_str, val, after_str, exp_rc))
         {
             return TestDidntExecute(test_num);
         }
@@ -440,8 +325,8 @@ int TestBTreeNodeInsertImpl()
             "3020 3030) 3100 (3110 3120 3130) 3200 (3210 3220 3230) 3300 (3310 "
             "3320 3330))";
 
-        if (!TestBTreeNodeInsertImplCase(&test_num, &num_passed, test_name,
-                size, before_str, val, after_str, exp_rc))
+        if (!TestBTreeNodeInsertImplCase(&test_num, &num_passed, &num_skipped,
+                test_name, size, before_str, val, after_str, exp_rc))
         {
             return TestDidntExecute(test_num);
         }
@@ -470,8 +355,8 @@ int TestBTreeNodeInsertImpl()
             "2330)) 3000 ((3010 3020 3030) 3100 (3110 3120 3130) 3200 (3210 "
             "3220 3230) 3300 (3310 3320 3330)))";
 
-        if (!TestBTreeNodeInsertImplCase(&test_num, &num_passed, test_name,
-                size, before_str, val, after_str, exp_rc))
+        if (!TestBTreeNodeInsertImplCase(&test_num, &num_passed, &num_skipped,
+                test_name, size, before_str, val, after_str, exp_rc))
         {
             return TestDidntExecute(test_num);
         }
@@ -500,8 +385,8 @@ int TestBTreeNodeInsertImpl()
             "3000 ((3010 3020 3030) 3100 (3110 3120 3130)) 3200 ((3210 3220 "
             "3230) 3300 (3310) 3320 (3330 3333)))";
 
-        if (!TestBTreeNodeInsertImplCase(&test_num, &num_passed, test_name,
-                size, before_str, val, after_str, exp_rc))
+        if (!TestBTreeNodeInsertImplCase(&test_num, &num_passed, &num_skipped,
+                test_name, size, before_str, val, after_str, exp_rc))
         {
             return TestDidntExecute(test_num);
         }
@@ -525,8 +410,8 @@ int TestBTreeNodeInsertImpl()
             "1220 1230) 1300 (1310 1320 1330)) 2000 ((2010 2020 2030) 2100 "
             "(2110 2120 2130) 2200 (2210 2220 2230) 2300 (2310 2320 2330))";
 
-        if (!TestBTreeNodeInsertImplCase(&test_num, &num_passed, test_name,
-                size, before_str, val, after_str, exp_rc))
+        if (!TestBTreeNodeInsertImplCase(&test_num, &num_passed, &num_skipped,
+                test_name, size, before_str, val, after_str, exp_rc))
         {
             return TestDidntExecute(test_num);
         }
@@ -535,12 +420,13 @@ int TestBTreeNodeInsertImpl()
     {
     }
 
-    PrintTestStats(num_passed, test_num);
+    PrintTestStats(num_passed, num_skipped, test_num);
     return 1;
 }
 
 int TestBTreeNodeDeleteImplCase(int* test_num,
     int* num_passed,
+    int* num_skipped,
     const char* test_name,
     int node_size,
     const char* before_tree_str,
@@ -549,6 +435,15 @@ int TestBTreeNodeDeleteImplCase(int* test_num,
     int exp_rc)
 {
     *test_num += 1;
+
+#ifdef BTREE_NODE_NODE_SIZE
+    if (BTREE_NODE_NODE_SIZE != node_size)
+    {
+        *num_skipped += 1;
+        PrintSkip(*test_num, test_name);
+        return 1;
+    }
+#endif
 
     DeserializationSettings settings = {
         .node_size = node_size, .lexer_settings = NULL};
@@ -601,7 +496,7 @@ int TestBTreeNodeDeleteImplCase(int* test_num,
 
 int TestBTreeNodeDeleteImpl()
 {
-    int test_num = 0, num_passed = 0;
+    int test_num = 0, num_passed = 0, num_skipped = 0;
     PrintBeginTest(__func__);
 
     // Case 1
@@ -613,8 +508,8 @@ int TestBTreeNodeDeleteImpl()
         const char* after     = "(1 2 4)";
         int exp_rc            = 1;
 
-        if (!TestBTreeNodeDeleteImplCase(&test_num, &num_passed, test_name,
-                size, before, val, after, exp_rc))
+        if (!TestBTreeNodeDeleteImplCase(&test_num, &num_passed, &num_skipped,
+                test_name, size, before, val, after, exp_rc))
             return TestDidntExecute(test_num);
     }
     // Case 2
@@ -626,8 +521,8 @@ int TestBTreeNodeDeleteImpl()
         const char* after     = "((1 2 4) 10 (11 12 13 14))";
         int exp_rc            = 1;
 
-        if (!TestBTreeNodeDeleteImplCase(&test_num, &num_passed, test_name,
-                size, before, val, after, exp_rc))
+        if (!TestBTreeNodeDeleteImplCase(&test_num, &num_passed, &num_skipped,
+                test_name, size, before, val, after, exp_rc))
             return TestDidntExecute(test_num);
     }
     // Case 3: Leaf borrows a key from a sibling
@@ -643,8 +538,8 @@ int TestBTreeNodeDeleteImpl()
         const char* after     = "((1 2 3) 4 (10) 20 (21 22 23))";
         int exp_rc            = 1;
 
-        if (!TestBTreeNodeDeleteImplCase(&test_num, &num_passed, test_name,
-                size, before, val, after, exp_rc))
+        if (!TestBTreeNodeDeleteImplCase(&test_num, &num_passed, &num_skipped,
+                test_name, size, before, val, after, exp_rc))
             return TestDidntExecute(test_num);
     }
     // Case 4: Leaf borrows a key from a sibling
@@ -656,8 +551,8 @@ int TestBTreeNodeDeleteImpl()
         const char* after     = "((1 2 3) 4 (10) 20 (21))";
         int exp_rc            = 1;
 
-        if (!TestBTreeNodeDeleteImplCase(&test_num, &num_passed, test_name,
-                size, before, val, after, exp_rc))
+        if (!TestBTreeNodeDeleteImplCase(&test_num, &num_passed, &num_skipped,
+                test_name, size, before, val, after, exp_rc))
             return TestDidntExecute(test_num);
     }
 
@@ -670,8 +565,8 @@ int TestBTreeNodeDeleteImpl()
         const char* after     = "((10 11) 20 (21 22 23))";
         int exp_rc            = 1;
 
-        if (!TestBTreeNodeDeleteImplCase(&test_num, &num_passed, test_name,
-                size, before, val, after, exp_rc))
+        if (!TestBTreeNodeDeleteImplCase(&test_num, &num_passed, &num_skipped,
+                test_name, size, before, val, after, exp_rc))
             return TestDidntExecute(test_num);
     }
     // Case 6: Deletion from internal node
@@ -688,8 +583,8 @@ int TestBTreeNodeDeleteImpl()
             "230 (235)))";
         int exp_rc = 1;
 
-        if (!TestBTreeNodeDeleteImplCase(&test_num, &num_passed, test_name,
-                size, before, val, after, exp_rc))
+        if (!TestBTreeNodeDeleteImplCase(&test_num, &num_passed, &num_skipped,
+                test_name, size, before, val, after, exp_rc))
             return TestDidntExecute(test_num);
     }
     // Case 7: val missing from tree
@@ -703,8 +598,8 @@ int TestBTreeNodeDeleteImpl()
             "(((25 26) 50 (75)) 100 ((125) 150 (175)) 200 ((225) 250 (275)))";
         int exp_rc = 2;
 
-        if (!TestBTreeNodeDeleteImplCase(&test_num, &num_passed, test_name,
-                size, before, val, after, exp_rc))
+        if (!TestBTreeNodeDeleteImplCase(&test_num, &num_passed, &num_skipped,
+                test_name, size, before, val, after, exp_rc))
             return TestDidntExecute(test_num);
     }
     // Case 8: merge right
@@ -718,8 +613,8 @@ int TestBTreeNodeDeleteImpl()
             "(((25 50) 100 (125) 150 (175)) 200 ((225) 250 (275)))";
         int exp_rc = 1;
 
-        if (!TestBTreeNodeDeleteImplCase(&test_num, &num_passed, test_name,
-                size, before, val, after, exp_rc))
+        if (!TestBTreeNodeDeleteImplCase(&test_num, &num_passed, &num_skipped,
+                test_name, size, before, val, after, exp_rc))
             return TestDidntExecute(test_num);
     }
     // Case 9: merge left
@@ -734,11 +629,11 @@ int TestBTreeNodeDeleteImpl()
             "(((50 75) 100 (125) 150 (175)) 200 ((225) 250 (275)))";
         int exp_rc = 1;
 
-        if (!TestBTreeNodeDeleteImplCase(&test_num, &num_passed, test_name,
-                size, before, val, after, exp_rc))
+        if (!TestBTreeNodeDeleteImplCase(&test_num, &num_passed, &num_skipped,
+                test_name, size, before, val, after, exp_rc))
             return TestDidntExecute(test_num);
     }
 
-    PrintTestStats(num_passed, test_num);
+    PrintTestStats(num_passed, num_skipped, test_num);
     return 1;
 }

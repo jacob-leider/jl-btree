@@ -1,12 +1,16 @@
 #ifndef __BTREE_NODE_CORE_H__
 #define __BTREE_NODE_CORE_H__
 
+#include "./btree_settings.h"
+
 // Dumb c nonsense.
 typedef struct BTreeNode BTreeNode;
 
 struct BTreeNode
 {
+#ifndef BTREE_NODE_NODE_SIZE
     int node_size;
+#endif
     int curr_size;
     // [keys[i], vals[i]] is a key-value pair.
     BTreeNode* par;
@@ -18,7 +22,12 @@ struct BTreeNode
     int subtree_size;
 };
 
+// Allow this to be set at compile time
+#ifdef BTREE_NODE_NODE_SIZE
+#define btree_node_node_size(node) BTREE_NODE_NODE_SIZE
+#else
 #define btree_node_node_size(node) (node->node_size)
+#endif
 
 #define btree_node_curr_size(node) (node->curr_size)
 #define btree_node_subtree_size(node) (node->subtree_size)
@@ -41,29 +50,28 @@ struct BTreeNode
     (btree_node_set_subtree_size(node, btree_node_subtree_size(node) - (dec)))
 #define btree_node_dec_subtree_size_1(node) \
     (btree_node_dec_subtree_size(node, 1))
-#define btree_node_inc_curr_size(node) \
-    (btree_node_set_curr_size(node, btree_node_curr_size(node) + 1))
-#define btree_node_dec_curr_size(node) \
-    (btree_node_set_curr_size(node, btree_node_curr_size(node) - 1))
+#define btree_node_inc_curr_size(node, inc) \
+    (btree_node_set_curr_size(node, btree_node_curr_size(node) + inc))
+#define btree_node_dec_curr_size(node, dec) \
+    (btree_node_set_curr_size(node, btree_node_curr_size(node) - dec))
+#define btree_node_inc_curr_size_1(node) (btree_node_inc_curr_size(node, 1))
+#define btree_node_dec_curr_size_1(node) (btree_node_dec_curr_size(node, 1))
 
 // BTreeNode macros
 #define btree_node_is_root(node) (node->par == NULL)
 
 #define btree_node_is_empty(node) (node->curr_size == 0)
 
-#define btree_node_is_full(node) (node->curr_size == node->node_size)
-
-#define btree_node_t(node) \
-    (node->node->size + 1) / 2 - 1((node->node_size + 1) / 2 - 1)
+#define btree_node_is_full(node) (node->curr_size == btree_node_node_size(node))
 
 #define btree_node_has_min_cap(node) \
-    (node->curr_size == (node->node_size + 1) / 2 - 1)
+    (node->curr_size == (btree_node_node_size(node) + 1) / 2 - 1)
 
 #define btree_node_under_min_cap(node) \
-    (node->curr_size < (node->node_size + 1) / 2 - 1)
+    (node->curr_size < (btree_node_node_size(node) + 1) / 2 - 1)
 
 #define btree_node_over_min_cap(node) \
-    (node->curr_size > (node->node_size + 1) / 2 - 1)
+    (node->curr_size > (btree_node_node_size(node) + 1) / 2 - 1)
 
 #define btree_node_is_leaf(node) (node->is_leaf)
 
@@ -73,13 +81,18 @@ struct BTreeNode
     (node != NULL & node->keys != NULL & node->children != NULL)
 
 #define btree_node_has_min_cap(node) \
-    (node->curr_size == (node->node_size + 1) / 2 - 1)
+    (node->curr_size == (btree_node_node_size(node) + 1) / 2 - 1)
 
 #define btree_node_ascend(node) (node = node->par)
 
 // Initializers
 
-int btree_node_init(int size, BTreeNode** node_ptr, int is_intl);
+int btree_node_init(
+#ifndef BTREE_NODE_NODE_SIZE
+    int size,
+#endif
+    BTreeNode** node_ptr,
+    int is_intl);
 
 int btree_node_leaf_to_intl(BTreeNode* node);
 

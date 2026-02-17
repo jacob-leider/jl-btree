@@ -99,7 +99,7 @@ void btree_subtree_kill(BTreeNode* node)
 
     if (node->children)
     {
-        for (int i = 0; i <= node->curr_size; i++)
+        for (int i = 0; i <= btree_node_curr_size(node); i++)
             btree_subtree_kill(btree_node_get_child(node, i));
     }
 
@@ -127,11 +127,11 @@ int btree_node_contains_key(BTreeNode* root, int key)
     // Search for a node containing `key`
     while (!btree_node_is_leaf(ptr))
     {
-        if (btree_node_get_key(ptr, ptr->curr_size - 1) < key)
+        if (btree_node_get_key(ptr, btree_node_curr_size(ptr) - 1) < key)
         {
-            child_idx = ptr->curr_size;
+            child_idx = btree_node_curr_size(ptr);
         }
-        else if (btree_node_get_key(ptr, ptr->curr_size - 1) == key)
+        else if (btree_node_get_key(ptr, btree_node_curr_size(ptr) - 1) == key)
         {
             return 1;
         }
@@ -141,7 +141,8 @@ int btree_node_contains_key(BTreeNode* root, int key)
         }
         else
         {
-            child_idx = binary_search(ptr->keys, 0, ptr->curr_size, key);
+            child_idx =
+                binary_search(ptr->keys, 0, btree_node_curr_size(ptr), key);
             if (btree_node_get_key(ptr, child_idx) == key) return 1;
             child_idx += 1;
         }
@@ -150,8 +151,8 @@ int btree_node_contains_key(BTreeNode* root, int key)
     }
 
     // Check if the leaf contains `key`
-    if (btree_node_get_key(
-            ptr, binary_search(ptr->keys, 0, ptr->curr_size, key)) == key)
+    if (btree_node_get_key(ptr,
+            binary_search(ptr->keys, 0, btree_node_curr_size(ptr), key)) == key)
     {
         return 1;
     }

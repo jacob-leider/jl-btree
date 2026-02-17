@@ -11,23 +11,29 @@
 void btree_node_print(BTreeNode* node)
 {
     printf("BTreeNode (%p)\n", node);
-    printf("\tnode type: %s\n", node->is_leaf ? "Leaf" : "Intl");
-    printf("\tcapacity:  %d\n", node->node_size);
-    printf("\tcurrent:   %d\n", node->curr_size);
+    printf("\tnode type: %s\n", btree_node_is_leaf(node) ? "Leaf" : "Intl");
+    printf("\tcapacity:  %d\n", btree_node_node_size(node));
+    printf("\tcurrent:   %d\n", btree_node_curr_size(node));
     printf("\telements:  ");
-    printArr(node->keys, node->curr_size);
+    printArr(node->keys, btree_node_curr_size(node));
 }
-void printNodeVals(BTreeNode* node) { printArr(node->keys, node->curr_size); }
+void printNodeVals(BTreeNode* node)
+{
+    printArr(node->keys, btree_node_curr_size(node));
+}
 
-void printNodeKeys(BTreeNode* node) { printArr(node->keys, node->curr_size); }
+void printNodeKeys(BTreeNode* node)
+{
+    printArr(node->keys, btree_node_curr_size(node));
+}
 
 void btree_node_print_and_point(BTreeNode* node, int pos)
 {
     printf("BTreeNode\n");
-    printf("\tcapacity: %d\n", node->node_size);
-    printf("\tcurrent: %d\n", node->curr_size);
+    printf("\tcapacity: %d\n", btree_node_node_size(node));
+    printf("\tcurrent: %d\n", btree_node_curr_size(node));
     printf("\telements: ");
-    printArr(node->keys, node->curr_size);
+    printArr(node->keys, btree_node_curr_size(node));
     printf("\t          ");
     int num_digits = get_num_digits_of_first_n(node->keys, pos, 10) + 2 * pos;
     for (int i = 0; i < num_digits; i++) printf(" ");
