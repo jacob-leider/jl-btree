@@ -1,5 +1,6 @@
 #include "delete.h"
 
+#include <assert.h>
 #include <limits.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -11,6 +12,7 @@
 #include "btree_settings.h"
 #include "printutils.h"
 #include "search.h"
+#include "stack.h"
 
 ////////////////////////////////// Purpose /////////////////////////////////////
 ///
@@ -47,26 +49,17 @@
 ///
 ////////////////////////////////////////////////////////////////////////////////
 
-// Used to cache a path
-typedef struct ChildIdxCache
-{
-    int* data;
-    int size;
-} ChildIdxCache;
-
-// Used to cache a series of merge instructions (either "merge with left
-// sibling" or "merge with right sibling")
-typedef struct MergeHintCache
-{
-    BTreeNodeSib* data;
-    int size;
-} MergeHintCache;
-
 // Determines which of `node`'s children is the root of a subtree containg `key`
-static int compute_child_idx(BTreeNode* node, int key, bool* found_key)
+static size_t compute_child_idx(BTreeNode* node, BTreeKey key, bool* found_key)
 {
-    int child_idx = 0;
-    *found_key    = 0;
+    size_t child_idx = 0;
+    *found_key       = 0;
+
+    if (btree_node_curr_size(node) == 0)
+    {
+        // Error. Subtracting 1 causes underflow.
+        printf("Underflow risk in %s at line %d\n", __FILE__, __LINE__);
+    }
 
     if (btree_node_get_key(node, btree_node_curr_size(node) - 1) < key)
     {
@@ -119,8 +112,8 @@ static int compute_child_idx(BTreeNode* node, int key, bool* found_key)
  * @return 0 if neither `node` nor its siblings have more than the minimum
  * number of keys, 1 otherwise
  */
-static bool btree_node_is_or_has_sib_over_min_cap(
-    BTreeNode* node, int child_idx)
+static bool btree_node_can_spare_or_borrow_key(
+    BTreeNode* node, size_t child_idx)
 {
     if (btree_node_over_min_cap(node))
     {
@@ -139,59 +132,48 @@ static bool btree_node_is_or_has_sib_over_min_cap(
     BTreeNode* right = NULL;
     btree_node_get_sibs(node, child_idx, &left, &right);
 
-    if (left != NULL && btree_node_over_min_cap(left))
+    if (btree_node_left_sib(node) != left)
+    {
+        printf("Left sib not stored on node\n");
+
+        printf("\t-Node: ");
+        printArr(btree_node_keys(node), btree_node_curr_size(node));
+
+        printf("\t-Stored: ");
+        if (btree_node_left_sib(node) != NULL)
+        {
+            printArr(btree_node_keys(btree_node_left_sib(node)),
+                btree_node_curr_size(btree_node_left_sib(node)));
+        }
+        else
+        {
+            printf("NULL\n");
+        }
+
+        printf("\t-Actual: ");
+        if (left != NULL)
+        {
+            printArr(btree_node_keys(left), btree_node_curr_size(left));
+        }
+        else
+        {
+            printf("NULL\n");
+        }
+    }
+
+    if (btree_node_left_sib(node) != NULL &&
+        btree_node_over_min_cap(btree_node_left_sib(node)))
     {
         return true;
     }
 
-    if (right != NULL && btree_node_over_min_cap(right))
+    if (btree_node_right_sib(node) != NULL &&
+        btree_node_over_min_cap(btree_node_right_sib(node)))
     {
         return true;
     }
 
     return false;
-}
-
-static bool update_child_hint_cache(ChildIdxCache* cache, int idx, int val)
-{
-    if (idx >= cache->size)
-    {
-        cache->size *= 2;
-
-        int* new_data = (int*)realloc(cache->data, cache->size * sizeof(int));
-        if (!new_data)
-        {
-            return false;
-        }
-
-        cache->data = new_data;
-    }
-
-    cache->data[idx] = val;
-
-    return true;
-}
-
-static bool update_merge_hint_cache(
-    MergeHintCache* cache, int idx, BTreeNodeSib val)
-{
-    if (idx >= cache->size)
-    {
-        cache->size *= 2;
-
-        BTreeNodeSib* new_data = (BTreeNodeSib*)realloc(
-            cache->data, cache->size * sizeof(BTreeNodeSib));
-        if (!new_data)
-        {
-            return false;
-        }
-
-        cache->data = new_data;
-    }
-
-    cache->data[idx] = val;
-
-    return true;
 }
 
 /**
@@ -206,7 +188,7 @@ static bool update_merge_hint_cache(
  * @return The sibling `node` should merge with if it needs to be merged during
  * a deletion
  */
-BTreeNodeSib compute_merge_hint(BTreeNode* node, int child_idx)
+BTreeNodeSib compute_merge_hint(BTreeNode* node, size_t child_idx)
 {
     if (btree_node_over_min_cap(node))
     {
@@ -235,7 +217,7 @@ BTreeNodeSib compute_merge_hint(BTreeNode* node, int child_idx)
     return UNDEFINED;
 }
 
-BTreeNodeSib compute_rotate_hint(BTreeNode* node, int child_idx)
+BTreeNodeSib compute_rotate_hint(BTreeNode* node, size_t child_idx)
 {
     if (btree_node_over_min_cap(node))
     {
@@ -263,6 +245,15 @@ BTreeNodeSib compute_rotate_hint(BTreeNode* node, int child_idx)
 
     return UNDEFINED;
 }
+
+typedef struct BTreeNodeDeleteState
+{
+    Stack* child_hint_cache_stack;
+    Stack* merge_hint_cache_stack;
+    BTreeNode* last_over_min_cap_anc;
+    size_t child_idx;
+    size_t last_child_idx;
+} BTreeNodeDeleteState;
 
 /**
  * @brief TODO
@@ -342,58 +333,59 @@ BTreeNodeSib compute_rotate_hint(BTreeNode* node, int child_idx)
  * @param depth_ptr [TODO:parameter]
  * @return [TODO:return]
  */
-static bool update_vars(BTreeNode* ptr,
-    int* last_child_idx_ptr,
-    int child_idx,
-    int* chain_end_child_idx_ptr,
-    BTreeNode** last_over_min_cap_anc_ptr,
-    ChildIdxCache* child_cache,
-    MergeHintCache* merge_hint_cache,
-    int* depth_ptr)
+static bool update_vars(BTreeNode* ptr, BTreeNodeDeleteState* state)
 {
     // Deref
-    BTreeNodeSib merge_cache_hint    = UNDEFINED;
-    BTreeNode* last_over_min_cap_anc = *last_over_min_cap_anc_ptr;
-    int depth                        = *depth_ptr;
-    int last_child_idx               = *last_child_idx_ptr;
-    int child_idx_after_merge        = child_idx;
-
-    // Did the chain break?
-    bool over_min_cap =
-        btree_node_is_or_has_sib_over_min_cap(ptr, last_child_idx);
+    BTreeNodeSib merge_hint          = UNDEFINED;
+    Stack* merge_hint_cache_stack    = state->merge_hint_cache_stack;
+    Stack* child_hint_cache_stack    = state->child_hint_cache_stack;
+    BTreeNode* last_over_min_cap_anc = state->last_over_min_cap_anc;
+    size_t last_child_idx            = state->last_child_idx;
+    size_t child_idx                 = state->child_idx;
+    size_t child_idx_after_merge     = state->child_idx;
 
     // ALWAYS decrement this. The pred-leaf loses a key, and `ptr` will always
     // have the pred-leaf as a descendant.
     btree_node_dec_subtree_size_1(ptr);
 
-    if (over_min_cap)
+    if (btree_node_can_spare_or_borrow_key(ptr, last_child_idx))
     {
+        last_over_min_cap_anc = ptr;
+
+        stack_clear(merge_hint_cache_stack);
+
         // Store the child-index of this node in case this node needs to borrow
         // a sibling.
-        *chain_end_child_idx_ptr = last_child_idx;
+        size_t stack_top = 0;
+        stack_get_top(child_hint_cache_stack, &stack_top);
+        stack_clear(child_hint_cache_stack);
+        stack_push(child_hint_cache_stack, &stack_top);
 
-        last_over_min_cap_anc    = ptr;
-        depth                    = 0;
-
-        merge_cache_hint         = compute_rotate_hint(ptr, last_child_idx);
+        merge_hint = compute_rotate_hint(ptr, last_child_idx);
 
         // If we're borrowing a key from our left sibling, the child index of
         // the next node is increased by one
-        if (merge_cache_hint == LEFT)
+        if (merge_hint == LEFT)
         {
             child_idx_after_merge = child_idx + 1;
         }
     }
     else
     {
-        merge_cache_hint = compute_merge_hint(ptr, last_child_idx);
+        merge_hint = compute_merge_hint(ptr, last_child_idx);
 
         // If we're merging our left sibling, the next node's child index will
         // be incremented once for each of our left sibling's children. If we're
         // merging with our right sibling, all of it's children will appear
         // after the next node, so no change to its child index.
-        if (merge_cache_hint == LEFT)
+        if (merge_hint == LEFT)
         {
+            if (last_child_idx == 0)
+            {
+                printf("Underflow risk in %s at line %d\n", __FILE__, __LINE__);
+                return false;
+            }
+
             BTreeNode* left_sib =
                 btree_node_get_child(btree_node_par(ptr), last_child_idx - 1);
 
@@ -402,24 +394,22 @@ static bool update_vars(BTreeNode* ptr,
     }
 
     // Update merge hint cache
-    if (!update_merge_hint_cache(merge_hint_cache, depth, merge_cache_hint))
+    if (!stack_push(merge_hint_cache_stack, &merge_hint))
     {
         return false;
     }
 
     // Update child idx cache
-    if (!update_child_hint_cache(child_cache, depth, child_idx_after_merge))
+    if (!stack_push(child_hint_cache_stack, &child_idx_after_merge))
     {
         return false;
     }
 
-    *last_over_min_cap_anc_ptr = last_over_min_cap_anc;
-    *depth_ptr                 = depth;
-    *last_child_idx_ptr        = child_idx;
+    state->last_over_min_cap_anc = last_over_min_cap_anc;
+    state->last_child_idx        = child_idx;
 
     return true;
 }
-
 /**
  * @brief Swaps the key with its predecessor and removes the predecessor
  * from its leaf
@@ -531,40 +521,30 @@ static bool update_vars(BTreeNode* ptr,
  *    - 1: OK
  */
 int btree_node_delete_key(BTreeNode* root,
-    int key,
+    BTreeKey key,
     BTreeNode** last_over_min_cap_anc_ptr,
-    int* chain_end_child_idx_ptr,  // TODO: Rename
-    BTreeNodeSib** merge_hint_cache_ptr,
-    int** child_idx_cache_ptr)
+    Stack* child_hint_cache_stack,
+    Stack* merge_hint_cache_stack)
 {
-    // clang-format off
-    // - it screws with my struct initialization style preference
-    ChildIdxCache child_idx_cache = 
-    {
-      .data = (int*)malloc(sizeof(int) * DEFAULT_CHILD_IDX_CACHE_SIZE),
-      .size = DEFAULT_CHILD_IDX_CACHE_SIZE
-    };
-    
-    MergeHintCache merge_hint_cache = 
-    {
-      .data = (BTreeNodeSib*)malloc( sizeof(BTreeNodeSib) * DEFAULT_SIB_TO_MERGE_WITH_CACHE_SIZE),
-      .size = DEFAULT_SIB_TO_MERGE_WITH_CACHE_SIZE
-    };  // clang-format on
-
     // Search for a node containing `key`
-    int child_idx                    = -1;
-    int last_child_idx               = -1;
-    int depth                        = 0;
-    bool found_key                   = 0;
-    bool encountered_leaf            = 0;
-    int chain_end_child_idx          = 0;
-    BTreeNode* a                     = root;
-    BTreeNode* c                     = NULL;
-    BTreeNode* last_over_min_cap_anc = NULL;
+    // clang-format off
+    BTreeNodeDeleteState state = {
+        .last_over_min_cap_anc  = NULL,
+        .child_hint_cache_stack = child_hint_cache_stack,        
+        .merge_hint_cache_stack = merge_hint_cache_stack,
+        .child_idx              = 0,
+        .last_child_idx         = 0 
+    };
+    // clang-format on
+
+    bool found_key        = 0;
+    bool encountered_leaf = 0;
+    BTreeNode* a          = root;
+    BTreeNode* c          = NULL;
 
     while (c == NULL && !encountered_leaf)
     {
-        child_idx = compute_child_idx(a, key, &found_key);
+        state.child_idx = compute_child_idx(a, key, &found_key);
 
         if (found_key)
         {
@@ -580,15 +560,12 @@ int btree_node_delete_key(BTreeNode* root,
             {
                 // Update subtree sizes, update child index cache, and either
                 // merge hint cache or rotate hint
-                if (!update_vars(a, &last_child_idx, child_idx,
-                        &chain_end_child_idx, &last_over_min_cap_anc,
-                        &child_idx_cache, &merge_hint_cache, &depth))
+                if (!update_vars(a, &state))
+                {
                     return 0;
+                }
 
-                a = btree_node_get_child(a, child_idx);
-
-                // Update depth
-                depth += 1;
+                a = btree_node_get_child(a, state.child_idx);
             }
         }
     }
@@ -601,49 +578,42 @@ int btree_node_delete_key(BTreeNode* root,
 
     while (!btree_node_is_leaf(a))
     {
-        child_idx = compute_child_idx(a, key, &found_key);
+        state.child_idx = compute_child_idx(a, key, &found_key);
 
         // Update subtree sizes, update child index cache, and either merge hint
         // cache or rotate hint
-        if (!update_vars(a, &last_child_idx, child_idx, &last_over_min_cap_anc,
-                &chain_end_child_idx, &child_idx_cache, &merge_hint_cache,
-                &depth))
+        if (!update_vars(a, &state))
+        {
             return 0;
+        }
 
         // If A contains `key`, it will be set to the child BEFORE
         // `key`
-        a = btree_node_get_child(a, child_idx);
-
-        depth += 1;
+        a = btree_node_get_child(a, state.child_idx);
     }
 
     if (c != a)
     {
-        int pred = btree_node_get_last_key(a);
+        BTreeKey pred = btree_node_get_last_key(a);
 
-#if BTREE_DEBUG_1 != 1
-        btree_node_set_key(c, child_idx, pred);
-#endif
+        btree_node_set_key(c, state.child_idx, pred);
 
-        child_idx = btree_node_curr_size(a) - 1;
+        // Underflow risk. TODO: Should this really be an assert?
+        assert(btree_node_curr_size(a) > 0);
+
+        state.child_idx = btree_node_curr_size(a) - 1;
     }
 
     // Update subtree sizes, update child index cache, and either merge hint
     // cache or rotate hint
-    if (!update_vars(a, &last_child_idx, child_idx, &chain_end_child_idx,
-            &last_over_min_cap_anc, &child_idx_cache, &merge_hint_cache,
-            &depth))
-        return 0;
+    if (!update_vars(a, &state)) return 0;
 
     // Remove `pred` or `key` from pred_leaf
 #if BTREE_DEBUG_1 != 1
-    btree_node_remove_key(a, child_idx);
+    btree_node_remove_key(a, state.child_idx, NULL);
 #endif
 
-    *last_over_min_cap_anc_ptr = last_over_min_cap_anc;
-    *merge_hint_cache_ptr      = merge_hint_cache.data;
-    *child_idx_cache_ptr       = child_idx_cache.data;
-    *chain_end_child_idx_ptr   = chain_end_child_idx;
+    *last_over_min_cap_anc_ptr = state.last_over_min_cap_anc;
 
     return 1;
 }
@@ -663,11 +633,12 @@ int btree_node_delete_key(BTreeNode* root,
  * @param pivot_idx
  */
 static void btree_node_rotate_left(
-    BTreeNode* lsib, BTreeNode* rsib, int pivot_idx)
+    BTreeNode* lsib, BTreeNode* rsib, size_t pivot_idx)
 {
     // append pivot and `rsib`'s first child to the back of lsib
     // replace pivot with first key of `rsib`
-    int rsib_first_key = 0;
+    size_t rsib_first_key       = 0;
+    BTreeNode* rsib_first_child = NULL;
 
     btree_node_pop_front_key(rsib, &rsib_first_key);
 
@@ -676,12 +647,28 @@ static void btree_node_rotate_left(
 
     if (!btree_node_is_leaf(lsib))
     {
-        BTreeNode* rsib_first_child = NULL;
         btree_node_pop_front_child(rsib, &rsib_first_child);
 
-        // TODO: rsib_first_child may be null. Check for this
+        // TODO: Should this really be an assert?
+        assert(rsib_first_child != NULL);
 
         btree_node_push_back_child(lsib, rsib_first_child);
+    }
+
+    // Deal with subtree sizes
+    btree_node_dec_subtree_size_1(rsib);
+
+    btree_node_inc_subtree_size_1(lsib);
+
+    if (!btree_node_is_leaf(lsib))
+    {
+        assert(rsib_first_child != NULL);
+
+        btree_node_dec_subtree_size(
+            rsib, btree_node_subtree_size(rsib_first_child));
+
+        btree_node_inc_subtree_size(
+            lsib, btree_node_subtree_size(rsib_first_child));
     }
 
     btree_node_set_key(btree_node_par(lsib), pivot_idx, rsib_first_key);
@@ -695,11 +682,12 @@ static void btree_node_rotate_left(
  * @par Assumptions
  */
 static void btree_node_rotate_right(
-    BTreeNode* lsib, BTreeNode* rsib, int pivot_idx)
+    BTreeNode* lsib, BTreeNode* rsib, size_t pivot_idx)
 {
     // append pivot and `lsib`'s last child to the front of rsib
     // replace pivot with last key of `lsib`
-    int lsib_last_val = 0;
+    BTreeKey lsib_last_val     = 0;
+    BTreeNode* lsib_last_child = NULL;
 
     btree_node_pop_back_key(lsib, &lsib_last_val);
 
@@ -708,13 +696,28 @@ static void btree_node_rotate_right(
 
     if (!btree_node_is_leaf(lsib))
     {
-        BTreeNode* lsib_last_child = NULL;
-
         btree_node_pop_back_child(lsib, &lsib_last_child);
 
-        // TODO: lsib_last_child may be null. Check for this
+        // TODO: Should this really be an assert?
+        assert(lsib_last_child != NULL);
 
         btree_node_push_front_child(rsib, lsib_last_child);
+    }
+
+    // Deal with subtree sizes
+    btree_node_dec_subtree_size_1(lsib);
+
+    btree_node_inc_subtree_size_1(rsib);
+
+    if (!btree_node_is_leaf(lsib))
+    {
+        assert(lsib_last_child != NULL);
+
+        btree_node_dec_subtree_size(
+            lsib, btree_node_subtree_size(lsib_last_child));
+
+        btree_node_inc_subtree_size(
+            rsib, btree_node_subtree_size(lsib_last_child));
     }
 
     btree_node_set_key(btree_node_par(rsib), pivot_idx, lsib_last_val);
@@ -722,6 +725,9 @@ static void btree_node_rotate_right(
 
 /**
  * @brief Merge `lsib` and `rsib`, storing the result in `lsib`
+ *
+ * @details the pivot key, then `right`'s keys and (if `left` is internal)
+ * `right`'s children are appended to `left`. `right` is destroyed.
  *
  * @param lsib
  * @param rsib
@@ -732,27 +738,34 @@ static void btree_node_rotate_right(
  *   - `lsib` and `rsib` are either both leaves or both internal
  */
 static void btree_node_merge_sibs(
-    BTreeNode* left, BTreeNode* right, BTreeNode* par, int sep_idx)
+    BTreeNode* left, BTreeNode* right, BTreeNode* par, size_t sep_idx)
 {
-    // the pivot key, then `right`'s keys and (if `left` is internal) `right`'s
-    // children are appended to `left`
+    // 1. Amend left sibling
+    //     a. Keys
+    btree_node_push_back_key(left, btree_node_get_key(par, sep_idx));
+    btree_node_append_key_range(left, right, 0, btree_node_num_keys(right));
+
+    //     b. Children
     if (!btree_node_is_leaf(left))
     {
-        btree_node_copy_child_range(left, right, btree_node_curr_size(left) + 1,
-            0, btree_node_curr_size(right) + 1);
+        btree_node_append_child_range(
+            left, right, 0, btree_node_num_children(right));
     }
 
-    btree_node_push_back_key(left, btree_node_get_key(par, sep_idx));
-    btree_node_append_key_range(left, right, 0, btree_node_curr_size(right));
+    btree_node_inc_subtree_size(left, btree_node_subtree_size(right) + 1);
 
+    // 2. Amend par
+    //     a. Keys
+    btree_node_remove_key(par, sep_idx, NULL);
+    //     b. Children
+    btree_node_remove_child(par, sep_idx + 1, NULL);
+
+    // 3. Amend right sibling
     btree_node_kill(right);
-
-    // Parent loses the pivot key, but its subtree size doens't change
-    btree_node_remove_key(par, sep_idx);
-    btree_node_remove_child(par, sep_idx + 1);
 }
 
-int btree_node_delete_impl(BTreeNode* root, int val, BTreeNode** new_root_ptr)
+int btree_node_delete_impl(
+    BTreeNode* root, BTreeKey val, BTreeNode** new_root_ptr)
 {
 #if REDUNDANT > 1
     if (root == NULL)
@@ -766,58 +779,93 @@ int btree_node_delete_impl(BTreeNode* root, int val, BTreeNode** new_root_ptr)
         return 2;
     }
 
-    BTreeNode* ptr                 = NULL;
-    int* child_idx_cache           = NULL;
-    BTreeNodeSib* merge_hint_cache = NULL;
-    int chain_end_child_idx        = -1;
+    Stack* child_hint_cache_stack =
+        stack_init(sizeof(size_t), DEFAULT_CHILD_IDX_CACHE_SIZE);
+    if (child_hint_cache_stack == NULL)
+    {
+        // TODO: Simply don't cache the children if this fails. Don't error out.
+        return false;
+    }
 
-    if (!btree_node_delete_key(root, val, &ptr, &chain_end_child_idx,
-            &merge_hint_cache, &child_idx_cache))
+    Stack* merge_hint_cache_stack =
+        stack_init(sizeof(BTreeNodeSib), DEFAULT_CHILD_IDX_CACHE_SIZE);
+    if (merge_hint_cache_stack == NULL)
+    {
+        // TODO: Simply don't cache the children if this fails. Don't error out.
+        return false;
+    }
+
+    BTreeNode* ptr = NULL;
+
+    if (!btree_node_delete_key(
+            root, val, &ptr, child_hint_cache_stack, merge_hint_cache_stack))
     {
         // TODO: Handle appropriately. This could be an OOM error or a
         // detected race condition.
+        printf("Delete key returned 0.\n");
         return 0;
     }
+
+    BTreeNodeSib* merge_hint_cache = merge_hint_cache_stack->data;
+    size_t* child_hint_cache       = child_hint_cache_stack->data;
+
+    size_t chain_end_child_idx     = child_hint_cache[0];
 
     // The last routine deletes the key from the tree, and leaves a leaf
     // under min capacity. Now we need to rebalance the tree.
 
-    int depth        = 0;
+    size_t depth     = 0;
     BTreeNode* left  = NULL;
     BTreeNode* right = NULL;
 
     if (ptr == NULL)  // TODO: Redundant check for root of the correct form
     {
+        if (btree_node_curr_size(root) > 1)
+        {
+            // Error: root should only be squashed if it has exactly two
+            // children and neither can spare a key
+            stack_kill(merge_hint_cache_stack);
+            stack_kill(child_hint_cache_stack);
+
+            return 0;
+        }
+
         // Root is squashed
         left  = btree_node_get_child(root, 0);
         right = btree_node_get_child(root, 1);
 
         btree_node_merge_sibs(left, right, root, 0);
+
         *new_root_ptr = left;
     }
     else
     {
-        int rotate_hint = merge_hint_cache[depth];
+        BTreeNodeSib rotate_hint = merge_hint_cache[0];
+
+        // TODO: Validate that siblings are stored on ptr
 
         if (rotate_hint != NEITHER)
         {
-            btree_node_get_sibs(ptr, child_idx_cache[depth], &left, &right);
-
             if (rotate_hint == LEFT)
             {
                 // left sibling can spare a key
-                int pivot_idx = chain_end_child_idx - 1;
-                btree_node_rotate_right(left, ptr, pivot_idx);
+                // TODO: Check that chain_end_child_idx is > 0 and handle in the
+                // redundant case
+                btree_node_rotate_right(
+                    btree_node_left_sib(ptr), ptr, chain_end_child_idx - 1);
             }
             else if (rotate_hint == RIGHT)
             {
                 // right sibling can spare a key.
-                int pivot_idx = chain_end_child_idx;
-                btree_node_rotate_left(ptr, right, pivot_idx);
+                btree_node_rotate_left(
+                    ptr, btree_node_right_sib(ptr), chain_end_child_idx);
             }
             else if (rotate_hint == UNDEFINED)
             {
                 // TODO: Manually determine which way to rotate
+                stack_kill(merge_hint_cache_stack);
+                stack_kill(child_hint_cache_stack);
+
                 return 0;
             }
         }
@@ -828,27 +876,34 @@ int btree_node_delete_impl(BTreeNode* root, int val, BTreeNode** new_root_ptr)
 
     while (!btree_node_is_leaf(left))
     {
-        // Descend
-        left = btree_node_get_child(left, child_idx_cache[depth]);
+        size_t child_idx = child_hint_cache[depth + 1];
+        left             = btree_node_get_child(left, child_idx);
         depth += 1;
 
         // Merge
-        BTreeNode* par = btree_node_par(left);
-        int sep_idx    = 0;
-        if (merge_hint_cache[depth] == LEFT)
+        BTreeNode* par          = btree_node_par(left);
+        size_t sep_idx          = 0;
+
+        BTreeNodeSib merge_hint = merge_hint_cache[depth];
+        if (merge_hint == LEFT)
         {
+            sep_idx = child_idx - 1;
             right   = left;
-            sep_idx = child_idx_cache[depth - 1] - 1;
             left    = btree_node_get_child(par, sep_idx);
         }
-        else if (merge_hint_cache[depth] == RIGHT)
+        else if (merge_hint == RIGHT)
         {
-            sep_idx = child_idx_cache[depth - 1];
+            sep_idx = child_idx;
             right   = btree_node_get_child(par, sep_idx + 1);
         }
+        // TODO: Else, error
 
         btree_node_merge_sibs(left, right, par, sep_idx);
     }
+
+    // Free rebalance hint caches
+    stack_kill(merge_hint_cache_stack);
+    stack_kill(child_hint_cache_stack);
 
     return 1;
 }

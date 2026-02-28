@@ -1,11 +1,15 @@
 #include "./testutils.h"
 
+#include <assert.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/ioctl.h>
+#include <unistd.h>
 
 #include "../src/btree_print.h"
+#include "../src/stack.h"
 #include "./btree.h"
 #include "./btree_node.h"
 #include "./printutils.h"
@@ -121,106 +125,352 @@ int btree_size(BTreeNode* root)
     return size + btree_node_curr_size(root);
 }
 
-static int btree_cmp_r(BTreeNode* a, BTreeNode* b)
+typedef struct BTreeCmpState
 {
-    if (a == NULL & b == NULL)
+    BTreeNode* a_root;
+    BTreeNode* b_root;
+    BTreeNode* a;
+    BTreeNode* b;
+    const char* a_name;
+    const char* b_name;
+    Stack* path_stack;
+    FILE* outp_fp;
+} BTreeCmpState;
+
+static void print_n(FILE* fp, char c, size_t n)
+{
+    for (size_t i = 0; i < n; i++) fprintf(fp, "%c", c);
+}
+
+static void print_path_from_stack_verbose(BTreeCmpState* state)
+{
+    BTreeNode* ptr = state->a_root;
+
+    assert(ptr != NULL);
+
+    size_t num_spaces = 4;
+    print_n(state->outp_fp, ' ', num_spaces);
+    fprintf(state->outp_fp, "(");
+    fprintArrNoNl(
+        state->outp_fp, btree_node_keys(ptr), btree_node_num_keys(ptr));
+    fprintf(state->outp_fp, ")");
+
+    size_t temp = 0;
+    for (size_t depth = 0; depth < stack_size(state->path_stack); depth++)
     {
-        return 1;
+        stack_get_element(state->path_stack, depth, &temp);
+        ptr = btree_node_get_child(ptr, temp);
+
+        fprintf(state->outp_fp, "\n");
+        print_n(state->outp_fp, ' ', num_spaces);
+
+        fprintf(state->outp_fp, "│");
+
+        fprintf(state->outp_fp, "\n");
+        print_n(state->outp_fp, ' ', num_spaces);
+
+        fprintf(state->outp_fp, "└─> (");
+        fprintArrNoNl(
+            state->outp_fp, btree_node_keys(ptr), btree_node_num_keys(ptr));
+        fprintf(state->outp_fp, ")");
+
+        fprintf(state->outp_fp, "    idx = %d", temp);
+
+        num_spaces += 4;
     }
-    if (a == NULL ^ b == NULL)
+
+    fprintf(state->outp_fp, "\n");
+}
+
+void print_path_from_stack(BTreeCmpState* state)
+{
+    if (stack_is_empty(state->path_stack))
     {
-        printf("ONLY ONE NODE IS NULL\n");
-        if (a == NULL)
-        {
-            printf("(a): NULL\n");
-            printf("(b): NOT NULL:\n");
-            btree_node_print(b);
-        }
-        else
-        {
-            printf("(a): NOT NULL:\n");
-            btree_node_print(a);
-            printf("(b): NULL\n");
-        }
-        return 0;
+        fprintf(state->outp_fp, "root");
     }
 
-    // printf("a: ");
-    // printArr(a->keys, btree_node_curr_size(a));
-    // printf("b: ");
-    // printArr(b->keys, btree_node_curr_size(b));
-
-    if (btree_node_node_size(a) != btree_node_node_size(b))
+    size_t temp = 0;
+    for (size_t depth = 0; depth < stack_size(state->path_stack); depth++)
     {
-        return 0;
+        stack_get_element(state->path_stack, depth, &temp);
+        fprintf(state->outp_fp, " -> %d", temp);
     }
 
-    if (btree_node_curr_size(a) != btree_node_curr_size(b))
+    fprintf(state->outp_fp, "\n");
+}
+
+static void print_horizontal_line(FILE* fp)
+{
+    struct winsize w;
+    unsigned short cols = 80;
+    if (ioctl(STDIN_FILENO, TIOCGWINSZ, &w) >= 0)
     {
-        printf("WRONG CURR SIZE\n");
-        return 0;
+        cols = w.ws_col;
     }
 
-    if (btree_node_is_leaf(a) != btree_node_is_leaf(b))
+    for (unsigned short i = 0; i < cols; i++) fprintf(fp, "-");
+    fprintf(fp, "\n");
+}
+
+void btree_cmp_print_fail_start(BTreeCmpState* state)
+{
+    fprintf(state->outp_fp, "Path:\n\n");
+    print_path_from_stack_verbose(state);
+}
+
+void btree_cmp_print_fail_end(BTreeCmpState* state) {}
+
+static bool btree_cmp_r_null_check(BTreeCmpState* state)
+{
+    if (state->a == NULL && state->b == NULL)
     {
-        printf("LEAF VS. NON-LEAF");
-        return 0;
+        return true;
     }
 
-    if (btree_node_subtree_size(a) != btree_node_subtree_size(b))
+    if (state->a == NULL || state->b == NULL)
     {
-        printf("This node (a) has subtree size %d:\n\t",
-            btree_node_subtree_size(a));
-        printArr(a->keys, btree_node_curr_size(a));
-        printf("This node (b) has subtree size %d:\n\t",
-            btree_node_subtree_size(b));
-        printArr(b->keys, btree_node_curr_size(b));
+        btree_cmp_print_fail_start(state);
 
-        return 0;
+        fprintf(state->outp_fp, "(%s): is null\n",
+            state->a == NULL ? state->a_name : state->b_name);
+        fprintf(state->outp_fp, "(%s): is not null:\n",
+            state->a == NULL ? state->b_name : state->a_name);
+
+        btree_cmp_print_fail_end(state);
+
+        return false;
+    }
+
+    return true;
+}
+
+static bool btree_cmp_r_size_check(BTreeCmpState* state)
+{
+    return btree_node_node_size(state->a) == btree_node_node_size(state->b);
+}
+
+static bool btree_cmp_r_leaf_check(BTreeCmpState* state)
+{
+    if (btree_node_is_leaf(state->a) != btree_node_is_leaf(state->b))
+    {
+        btree_cmp_print_fail_start(state);
+
+        fprintf(state->outp_fp, "Node (%s) is a leaf and node (%s) is not.\n",
+            btree_node_is_leaf(state->a) ? state->a_name : state->b_name,
+            btree_node_is_leaf(state->a) ? state->b_name : state->a_name);
+
+        btree_cmp_print_fail_end(state);
+
+        return false;
+    }
+
+    return true;
+}
+
+static bool btree_cmp_r_num_keys_check(BTreeCmpState* state)
+{
+    if (btree_node_num_keys(state->a) != btree_node_num_keys(state->b))
+    {
+        btree_cmp_print_fail_start(state);
+
+        fprintf(state->outp_fp, "(%s) has size %d:\n\t", state->a_name,
+            btree_node_num_keys(state->a));
+        fprintf(state->outp_fp, "(%s) has size %d:\n\t", state->b_name,
+            btree_node_num_keys(state->b));
+
+        btree_cmp_print_fail_end(state);
+
+        return false;
+    }
+
+    return true;
+}
+
+static bool btree_cmp_r_num_children_check(BTreeCmpState* state)
+{
+    if (btree_node_num_children(state->a) != btree_node_num_children(state->b))
+    {
+        btree_cmp_print_fail_start(state);
+
+        fprintf(state->outp_fp, "(%s) has %d children:\n\t", state->a_name,
+            btree_node_num_children(state->a));
+        fprintArr(state->outp_fp, btree_node_keys(state->a),
+            btree_node_num_keys(state->a));
+        fprintf(state->outp_fp, "(%s) has %d children:\n\t", state->b_name,
+            btree_node_num_children(state->b));
+        fprintArr(state->outp_fp, btree_node_keys(state->b),
+            btree_node_num_keys(state->b));
+
+        btree_cmp_print_fail_end(state);
+
+        return false;
+    }
+
+    return true;
+}
+
+static bool btree_cmp_r_subtree_size_check(BTreeCmpState* state)
+{
+    if (btree_node_subtree_size(state->a) != btree_node_subtree_size(state->b))
+    {
+        fprintf(state->outp_fp, "Failed check (s)\n\n  - Subtree size\n");
+        fprintf(state->outp_fp, "\n");
+
+        fprintf(state->outp_fp, "Path:\n\n");
+        print_path_from_stack_verbose(state);
+
+        fprintf(state->outp_fp, "\n");
+        fprintf(state->outp_fp, "Details\n\n");
+
+        fprintf(state->outp_fp, "  - Subtree size of (%s) is %d\n",
+            state->a_name, btree_node_subtree_size(state->a));
+        fprintf(state->outp_fp, "  - Subtree size of (%s) is %d\n",
+            state->b_name, btree_node_subtree_size(state->b));
+
+        btree_cmp_print_fail_end(state);
+
+        return false;
+    }
+
+    return true;
+}
+
+static bool btree_cmp_r(BTreeCmpState* state)
+{
+    BTreeNode* a       = state->a;
+    BTreeNode* b       = state->b;
+    const char* a_name = state->a_name;
+    const char* b_name = state->b_name;
+
+    assert(a != NULL);
+    assert(b != NULL);
+
+    if (!btree_cmp_r_null_check(state))
+    {
+        return false;
+    }
+
+    if (!btree_cmp_r_size_check(state))
+    {
+        return false;
+    }
+
+    if (!btree_cmp_r_leaf_check(state))
+    {
+        return false;
+    }
+
+    if (!btree_cmp_r_num_keys_check(state))
+    {
+        return false;
+    }
+
+    if (!btree_cmp_r_num_children_check(state))
+    {
+        return false;
+    }
+
+    if (!btree_cmp_r_subtree_size_check(state))
+    {
+        return false;
     }
 
     // Neither are NULL
-    for (int idx = 0; idx < btree_node_curr_size(a); idx++)
+    for (size_t idx = 0; idx < btree_node_curr_size(state->a); idx++)
     {
-        if (!btree_node_is_leaf(a) && !btree_node_is_leaf(b))
+        if (!btree_node_is_leaf(state->a) && !btree_node_is_leaf(state->b))
         {
-            if (!btree_cmp_r(
-                    btree_node_get_child(a, idx), btree_node_get_child(b, idx)))
-            {
-                return 0;
-            }
-        }
+            stack_push(state->path_stack, &idx);
+            state->a = btree_node_get_child(a, idx);
+            state->b = btree_node_get_child(b, idx);
 
-        if (btree_node_get_key(a, idx) != btree_node_get_key(b, idx))
-        {
-            printf("DATA IS DIFFERENT\n");
-            return 0;
+            if (!btree_cmp_r(state))
+            {
+                return false;
+            }
+
+            stack_pop(state->path_stack, NULL);
+            state->a = a;
+            state->b = b;
         }
     }
 
     // last key
-    if (!btree_node_is_leaf(a) && !btree_node_is_leaf(b))
+    if (!btree_node_is_leaf(state->a) && !btree_node_is_leaf(state->b))
     {
-        if (!btree_cmp_r(
-                btree_node_get_last_child(a), btree_node_get_last_child(b)))
+        size_t idx = btree_node_curr_size(state->a);
+
+        stack_push(state->path_stack, &idx);
+        state->a = btree_node_get_child(a, idx);
+        state->b = btree_node_get_child(b, idx);
+
+        if (!btree_cmp_r(state))
         {
-            return 0;
+            return false;
         }
+
+        stack_pop(state->path_stack, NULL);
+        state->a = a;
+        state->b = b;
     }
 
-    return 1;
+    return true;
 }
 
-int btree_cmp(BTreeNode* a, BTreeNode* b)
+bool btree_cmp(BTreeCmpSettings* settings)
 {
-    int res = btree_cmp_r(a, b);
+    size_t initial_path_stack_size = 8;
+    Stack* path = stack_init(sizeof(size_t), initial_path_stack_size);
+
+    assert(settings != NULL);
+    assert(settings->a_root != NULL);
+    assert(settings->b_root != NULL);
+
+    if (settings->a_name == NULL)
+    {
+        settings->a_name = "a";
+    }
+
+    if (settings->b_name == NULL)
+    {
+        settings->b_name = "b";
+    }
+
+    // TODO: Better default files (location, name, etc.)
+    const char* default_log_file_path = "./err_log.txt";
+
+    if (settings->log_file_path == NULL)
+    {
+        settings->log_file_path = default_log_file_path;
+    }
+
+    FILE* fp = fopen(settings->log_file_path, "w");
+
+    if (fp == 0)
+    {
+        fp = fopen(default_log_file_path, "w");
+    }
+
+    BTreeCmpState state = {.a = settings->a_root,
+        .b                    = settings->b_root,
+        .a_root               = settings->a_root,
+        .b_root               = settings->b_root,
+        .a_name               = settings->a_name,
+        .b_name               = settings->b_name,
+        .path_stack           = path,
+        .outp_fp              = fp};
+
+    bool res            = btree_cmp_r(&state);
+
+    fclose(state.outp_fp);
+
     return res;
 }
 
 // DE-RECURSIVIZE (A)
 static int btree_subtree_in_order_traverse_r(BTreeNode* root)
 {
-    for (int i = 0; i < btree_node_curr_size(root); i++)
+    for (size_t i = 0; i < btree_node_curr_size(root); i++)
     {
         if (!btree_node_is_leaf(root))
             btree_subtree_in_order_traverse_r(btree_node_get_child(root, i));

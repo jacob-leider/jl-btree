@@ -14,8 +14,9 @@ int btree_node_contains_key(BTreeNode* root, int key);
 void btree_subtree_kill(BTreeNode* node);
 
 int btree_node_insert_impl(
-    BTreeNode* root, const int key, const BTreeNode** new_root_ptr);
+    BTreeNode* root, const BTreeKey key, const BTreeNode** new_root_ptr);
 
-int btree_node_delete_impl(BTreeNode* root, int val, BTreeNode** new_root_ptr);
+int btree_node_delete_impl(
+    BTreeNode* root, const BTreeKey key, BTreeNode** new_root_ptr);
 
 #endif

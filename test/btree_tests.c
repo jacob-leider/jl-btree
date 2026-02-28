@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
+#include <unistd.h>
 
 #include "./btree.h"
 #include "./btree_node.h"
@@ -13,6 +14,44 @@
 #include "./printutils.h"
 #include "./serialize.h"
 #include "./testutils.h"
+
+static void cpy(FILE* in, FILE* out)
+{
+    const size_t bufsize = 128;
+
+    unsigned char buf[bufsize];
+    size_t numread, numwrite;
+
+    while (!feof(in))
+    {
+        numread = fread(buf, sizeof(unsigned char), bufsize, in);
+
+        if (numread > 0)
+        {
+            numwrite = fwrite(buf, sizeof(unsigned char), numread, out);
+
+            if (numwrite != numread)
+            {
+                // TODO: Rewrite this crap
+                fputs("mismatch!\n", stderr);
+                return;
+            }
+        }
+    }
+}
+
+static void print_horizontal_line(FILE* fp)
+{
+    struct winsize w;
+    unsigned short cols = 80;
+    if (ioctl(STDIN_FILENO, TIOCGWINSZ, &w) >= 0)
+    {
+        cols = w.ws_col;
+    }
+
+    for (unsigned short i = 0; i < cols; i++) fprintf(fp, "-");
+    fprintf(fp, "\n");
+}
 
 static int TestDidntExecute(int test_num)
 {
@@ -24,22 +63,22 @@ void PrintPass(int test_num, const char* test_name)
 {
     char test_name_in_quotes[100];
     sprintf(test_name_in_quotes, "\"%s\"", test_name);
-    printf("\t- Test %-20s [%d]: " GREEN "Passed\n" RESET, test_name_in_quotes,
-        test_num);
+    char test_templ_str[60];
+    sprintf(
+        test_templ_str, "\t- Test %%-%ds [%%d]" GREEN " Passed\n" RESET, 30);
+
+    printf(test_templ_str, test_name_in_quotes, test_num);
 }
 
-void PrintSkip(int test_num, const char* test_name)
+void PrintSkip(int test_num, const char* test_name, const char* reason)
 {
     char test_name_in_quotes[100];
     sprintf(test_name_in_quotes, "\"%s\"", test_name);
-    printf("\t- Test %-20s [%d]: " YELLOW "Skipped\n" RESET,
-        test_name_in_quotes, test_num);
-}
+    char test_templ_str[60];
+    sprintf(test_templ_str,
+        "\t- Test %%-%ds [%%d]" YELLOW " Skipped: %%s\n" RESET, 30);
 
-void PrintFail(int test_num, int res, int exp)
-{
-    printf("Test %d: " RED "Failed\n\tRes: %d\n\tExp: %d\n" RESET, test_num,
-        res, exp);
+    printf(test_templ_str, test_name_in_quotes, test_num, reason);
 }
 
 static void PrintFailureReason(
@@ -47,10 +86,11 @@ static void PrintFailureReason(
 {
     char test_name_in_quotes[100];
     sprintf(test_name_in_quotes, "\"%s\"", test_name);
-    printf("\t- Test %-20s [%d]: " RED
-           "Failed: "
-           "%s not as expected\n" RESET,
-        test_name_in_quotes, test_num, reason);
+    char test_templ_str[60];
+    sprintf(test_templ_str,
+        "\t- Test %%-%ds [%%d]" RED " Failed: %%s not as expected\n" RESET, 30);
+
+    printf(test_templ_str, test_name_in_quotes, test_num, reason);
 }
 
 static void PrintCompTrees(BTreeNode* exp, BTreeNode* res)
@@ -130,7 +170,7 @@ int TestBTreeNodeInsertImplCase(int* test_num,
     if (BTREE_NODE_NODE_SIZE != node_size)
     {
         *num_skipped += 1;
-        PrintSkip(*test_num, test_name);
+        PrintSkip(*test_num, test_name, "settings mismatch");
         return 1;
     }
 #endif
@@ -157,21 +197,30 @@ int TestBTreeNodeInsertImplCase(int* test_num,
         return 1;
     }
 
-    if (!btree_cmp(after, exp_after))
+    BTreeCmpSettings btree_cmp_settings = {.a_root = after,
+        .b_root                                    = exp_after,
+        .a_name                                    = "computed",
+        .b_name                                    = "expected",
+        .log_file_path                             = NULL};
+
+    if (!btree_cmp(&btree_cmp_settings))
     {
         PrintFailureReason(*test_num, "tree", test_name);
-        PrintCompTrees(exp_after, after);
+
+        // print from log
+        FILE* fp     = fopen(btree_cmp_settings.log_file_path, "r");
+        FILE* log_fp = stdout;
+
+        print_horizontal_line(log_fp);
+        cpy(fp, log_fp);
+        print_horizontal_line(log_fp);
+
+        fclose(fp);
+
         return 1;
     }
 
-    // check sizes
-    if (!btree_check_subtree_sizes(after))
-    {
-        PrintFailureReason(*test_num, "a subtree size", test_name);
-        return 1;
-    }
-
-    // Ironically, this may not even work if the test failed...
+    // This may not work if the test failed...
     btree_subtree_kill(after);
     btree_subtree_kill(exp_after);
 
@@ -440,13 +489,18 @@ int TestBTreeNodeDeleteImplCase(int* test_num,
     if (BTREE_NODE_NODE_SIZE != node_size)
     {
         *num_skipped += 1;
-        PrintSkip(*test_num, test_name);
+        PrintSkip(*test_num, test_name, "settings mismatch");
         return 1;
     }
 #endif
 
     DeserializationSettings settings = {
         .node_size = node_size, .lexer_settings = NULL};
+
+    BTreeNode* exp_after_root;
+    if (!TreeFromStr(
+            after_tree_str, strlen(after_tree_str), &settings, &exp_after_root))
+        return 0;
 
     BTreeNode* before_root;
     if (!TreeFromStr(
@@ -466,27 +520,35 @@ int TestBTreeNodeDeleteImplCase(int* test_num,
     if (rc != exp_rc)
     {
         PrintFailureReason(*test_num, "return code", test_name);
+        printf("exp rc: %d, rc: %d\n", exp_rc, rc);
         return 1;
     }
 
-    if (strncmp(StrFromTree(after_root), after_tree_str,
-            strlen(after_tree_str)) != 0)
+    BTreeCmpSettings btree_cmp_settings = {.a_root = after_root,
+        .b_root                                    = exp_after_root,
+        .a_name                                    = "computed",
+        .b_name                                    = "expected",
+        .log_file_path                             = NULL};
+
+    if (!btree_cmp(&btree_cmp_settings))
     {
         PrintFailureReason(*test_num, "tree", test_name);
-        printf("\nexpected: \"%s\"", after_tree_str);
-        printf("recieved: \"%s\"\n\n", StrFromTree(after_root));
-        return 1;
-    }
 
-    // check sizes
-    if (!btree_check_subtree_sizes(after_root))
-    {
-        PrintFailureReason(*test_num, "a subtree size", test_name);
+        // print from log
+        FILE* fp     = fopen(btree_cmp_settings.log_file_path, "r");
+        FILE* log_fp = stdout;
+
+        print_horizontal_line(log_fp);
+        cpy(fp, log_fp);
+        print_horizontal_line(log_fp);
+
+        fclose(fp);
+
         return 1;
     }
 
     btree_subtree_kill(after_root);
-    // btree_subtree_kill(exp_after_root);
+    btree_subtree_kill(exp_after_root);
 
     PrintPass(*test_num, test_name);
 
@@ -518,7 +580,7 @@ int TestBTreeNodeDeleteImpl()
         int size              = 4;
         const char* before    = "(1 2 3 4) 10 (11 12 13 14)";
         int val               = 3;
-        const char* after     = "((1 2 4) 10 (11 12 13 14))";
+        const char* after     = "(1 2 4) 10 (11 12 13 14)";
         int exp_rc            = 1;
 
         if (!TestBTreeNodeDeleteImplCase(&test_num, &num_passed, &num_skipped,
@@ -531,11 +593,11 @@ int TestBTreeNodeDeleteImpl()
     //      - descend once
     //      - rotate left about 20
     {
-        const char* test_name = "";
+        const char* test_name = "leaf borrows from left";
         int size              = 4;
         const char* before    = "(1 2 3 4) 10 (11) 20 (21 22 23)";
         int val               = 11;
-        const char* after     = "((1 2 3) 4 (10) 20 (21 22 23))";
+        const char* after     = "(1 2 3) 4 (10) 20 (21 22 23)";
         int exp_rc            = 1;
 
         if (!TestBTreeNodeDeleteImplCase(&test_num, &num_passed, &num_skipped,
@@ -544,11 +606,11 @@ int TestBTreeNodeDeleteImpl()
     }
     // Case 4: Leaf borrows a key from a sibling
     {
-        const char* test_name = "";
+        const char* test_name = "leaf borrows from left (2)";
         int size              = 4;
         const char* before    = "(1 2 3 4) 10 (11) 20 (21)";
         int val               = 11;
-        const char* after     = "((1 2 3) 4 (10) 20 (21))";
+        const char* after     = "(1 2 3) 4 (10) 20 (21)";
         int exp_rc            = 1;
 
         if (!TestBTreeNodeDeleteImplCase(&test_num, &num_passed, &num_skipped,
@@ -558,11 +620,11 @@ int TestBTreeNodeDeleteImpl()
 
     // Case 5: Two leaves get merged
     {
-        const char* test_name = "";
+        const char* test_name = "leaves merged";
         int size              = 3;
         const char* before    = "(1) 10 (11) 20 (21 22 23)";
         int val               = 1;
-        const char* after     = "((10 11) 20 (21 22 23))";
+        const char* after     = "(10 11) 20 (21 22 23)";
         int exp_rc            = 1;
 
         if (!TestBTreeNodeDeleteImplCase(&test_num, &num_passed, &num_skipped,
@@ -578,9 +640,9 @@ int TestBTreeNodeDeleteImpl()
             "(221) 230 (235))";
         int val = 10;
         const char* after =
-            "(((1) 2 (20)) 100 ((101) 110 (114)) 200 ((201) 210 (211) 220 "
+            "((1) 2 (20)) 100 ((101) 110 (114)) 200 ((201) 210 (211) 220 "
             "(221) "
-            "230 (235)))";
+            "230 (235))";
         int exp_rc = 1;
 
         if (!TestBTreeNodeDeleteImplCase(&test_num, &num_passed, &num_skipped,
@@ -595,7 +657,7 @@ int TestBTreeNodeDeleteImpl()
             "((25 26) 50 (75)) 100 ((125) 150 (175)) 200 ((225) 250 (275))";
         int val = 10;
         const char* after =
-            "(((25 26) 50 (75)) 100 ((125) 150 (175)) 200 ((225) 250 (275)))";
+            "((25 26) 50 (75)) 100 ((125) 150 (175)) 200 ((225) 250 (275))";
         int exp_rc = 2;
 
         if (!TestBTreeNodeDeleteImplCase(&test_num, &num_passed, &num_skipped,
@@ -610,7 +672,7 @@ int TestBTreeNodeDeleteImpl()
             "((25) 50 (75)) 100 ((125) 150 (175)) 200 ((225) 250 (275))";
         int val = 75;
         const char* after =
-            "(((25 50) 100 (125) 150 (175)) 200 ((225) 250 (275)))";
+            "((25 50) 100 (125) 150 (175)) 200 ((225) 250 (275))";
         int exp_rc = 1;
 
         if (!TestBTreeNodeDeleteImplCase(&test_num, &num_passed, &num_skipped,
@@ -626,7 +688,7 @@ int TestBTreeNodeDeleteImpl()
         int val = 25;
         // (225) is null!
         const char* after =
-            "(((50 75) 100 (125) 150 (175)) 200 ((225) 250 (275)))";
+            "((50 75) 100 (125) 150 (175)) 200 ((225) 250 (275))";
         int exp_rc = 1;
 
         if (!TestBTreeNodeDeleteImplCase(&test_num, &num_passed, &num_skipped,

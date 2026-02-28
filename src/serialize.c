@@ -1,6 +1,8 @@
 #include "./serialize.h"
 
+#include <assert.h>
 #include <ctype.h>
+#include <limits.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -10,6 +12,7 @@
 #include "./btree_node.h"
 #include "./btree_print.h"
 #include "./printutils.h"
+#include "./stack.h"
 
 static int min(int a, int b) { return a <= b ? a : b; }
 static int max(int a, int b) { return a <= b ? b : a; }
@@ -26,7 +29,8 @@ typedef enum TokenType
 typedef struct Token
 {
     TokenType type;
-    int val;
+    BTreeKey val;
+    bool is_intl;
 } Token;
 
 typedef struct TokenNode
@@ -38,8 +42,8 @@ typedef struct TokenNode
 typedef struct String
 {
     char* str;
-    int len;
-    int idx;
+    size_t len;
+    size_t idx;
 } String;
 
 LexerSettings* default_lexer_settings()
@@ -457,6 +461,88 @@ DeserializationSettings defaut_deserialization_settings(int node_size)
     return settings;
 };
 
+typedef struct ParseContext
+{
+    size_t depth;
+} ParseContext;
+
+/**
+ * @brief Fill out token fields
+ *
+ * @param tok_seq Token sequence
+ * @param n_tokens Number of tokens (size of tok_seq)
+ * @param settings Deserialization settings
+ * @param err_msg_ptr Optional error message
+ * For issues like OOM, set to false.
+ * @return [TODO:return]
+ */
+bool ProvideParseContext(Token* tok_seq,
+    int n_tokens,
+    DeserializationSettings* settings,
+    ParseContext* parse_ctx,
+    char** err_msg_ptr)
+{
+    size_t depth      = 0;
+    size_t max_depth  = 0;
+    Stack* path_stack = stack_init(sizeof(Token*), 8);
+
+    if (path_stack == NULL)
+    {
+        *err_msg_ptr = "OOM - couldn't initialize path stack";
+        return false;
+    }
+
+    BTreeKey last_key      = INT_MIN;
+
+    bool enforce_key_order = settings->lexer_settings.enforce_key_order;
+
+    for (size_t idx = 0; idx < n_tokens; idx++)
+    {
+        Token* tok = &tok_seq[idx];
+
+        if (tok->type == LPAREN)
+        {
+            depth += 1;
+            max_depth = max(max_depth, depth);
+
+            if (!stack_is_empty(path_stack))
+            {
+                // Parent is (obviously) not a leaf
+                Token* par_tok = NULL;
+                stack_get_top(path_stack, &par_tok);
+
+                assert(par_tok != NULL);
+                assert(par_tok->type == LPAREN);
+
+                par_tok->is_intl = true;
+            }
+
+            stack_push(path_stack, &tok);
+        }
+        else if (tok->type == RPAREN)
+        {
+            assert(!stack_is_empty(path_stack));
+
+            stack_pop(path_stack, NULL);
+            depth -= 1;
+        }
+        else if (tok->type == NUMBER)
+        {
+            // Nothing to do for now.
+            BTreeKey key = tok->val;
+            if (enforce_key_order && key < last_key)
+            {
+                *err_msg_ptr = "Invalid key order";
+                return false;
+            }
+        }
+    }
+
+    parse_ctx->depth = max_depth;
+
+    return 1;
+}
+
 /**
  * @brief Deserialize a serialized btree
  *
@@ -494,12 +580,15 @@ int TreeFromStr(const char* str,
         return 0;
     }
 
+    ParseContext parse_ctx;
+    if (!ProvideParseContext(tok_seq, n_tokens, settings, &parse_ctx, &err))
+    {
+        return 0;
+    }
+
     BTreeNode* root = NULL;
-    if (!btree_node_init(
-#ifndef BTREE_NODE_NODE_SIZE
-            settings->node_size,
-#endif
-            &root, 0))
+    bool is_intl    = parse_ctx.depth > 0;
+    if (!btree_node_init(settings->node_size, &root, is_intl))
     {
         return 0;
     }
@@ -509,28 +598,26 @@ int TreeFromStr(const char* str,
     {
         TokenType type = tok_seq[idx].type;
         int val        = tok_seq[idx].val;
+        is_intl        = tok_seq[idx].is_intl;
 
         if (type == LPAREN)
         {
-            // Make it internal if it isn't already
-            if (btree_node_is_leaf(ptr))
-            {
-                if (!btree_node_leaf_to_intl(ptr))
-                {
-                    return 0;
-                }
-            }
+            assert(!btree_node_is_leaf(ptr));
 
             BTreeNode* child;
-            if (!btree_node_init(
-#ifndef BTREE_NODE_NODE_SIZE
-                    settings->node_size,
-#endif
-                    &child, 0))
+            if (!btree_node_init(settings->node_size, &child, is_intl))
                 return 0;
 
             btree_node_set_par(child, ptr);
-            btree_node_set_child(ptr, btree_node_curr_size(ptr), child);
+
+            if (btree_node_num_children(ptr) > 0)
+            {
+                BTreeNode* lsib = btree_node_get_last_child(ptr);
+                btree_node_set_left_sib(child, lsib);
+                btree_node_set_right_sib(lsib, child);
+            }
+
+            btree_node_push_back_child(ptr, child);
             ptr = child;
         }
         else if (type == RPAREN)
@@ -543,9 +630,10 @@ int TreeFromStr(const char* str,
                 return 0;
             }
 
-            BTreeNode* par = btree_node_par(ptr);
-            btree_node_inc_subtree_size(par, btree_node_subtree_size(ptr));
-            ptr = par;
+            BTreeNode* child = ptr;
+            ptr              = btree_node_par(ptr);
+
+            btree_node_inc_subtree_size(ptr, btree_node_subtree_size(child));
         }
         else if (type == NUMBER)
         {
@@ -555,8 +643,7 @@ int TreeFromStr(const char* str,
                 return 0;
             }
 
-            btree_node_set_key(ptr, btree_node_curr_size(ptr), val);
-            btree_node_inc_curr_size_1(ptr);
+            btree_node_push_back_key(ptr, val);
             btree_node_inc_subtree_size_1(ptr);
         }
         else
