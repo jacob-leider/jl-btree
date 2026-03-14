@@ -596,7 +596,9 @@ int btree_node_delete_key(BTreeNode* root,
     {
         BTreeKey pred = btree_node_get_last_key(a);
 
+#if BTREE_DEBUG_1 != 1
         btree_node_set_key(c, state.child_idx, pred);
+#endif
 
         // Underflow risk. TODO: Should this really be an assert?
         assert(btree_node_curr_size(a) > 0);
