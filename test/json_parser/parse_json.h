@@ -38,12 +38,7 @@ typedef struct JsonNumber
 typedef struct JsonString
 {
     size_t len;
-    bool is_wchar_format;
-    union
-    {
-        char* data;
-        char* wchar_data;
-    };
+    char* data;
 } JsonString;
 
 typedef struct JsonList
@@ -85,6 +80,10 @@ typedef enum JsonCursorType
 typedef struct JsonCursor
 {
     JsonCursorType type;
+
+    // List index or property index
+    size_t index;
+
     union
     {
         JsonObject* object;
@@ -94,6 +93,7 @@ typedef struct JsonCursor
 
 typedef struct JsonSettings
 {
+    bool computing_mem_reqs;
 } JsonSettings;
 
 bool parse_json_number(
@@ -107,8 +107,7 @@ bool parse_json_string(const char* escaped_str,
 
 bool parse_json(FILE* fp,
     JsonSettings settings,
-    JsonObject** root_object_ptr,
-    JsonList** root_list_ptr,
+    JsonValue** root_value_ptr,
     char** err_msg);
 
 #endif

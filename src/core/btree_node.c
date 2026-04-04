@@ -7,6 +7,7 @@
 #include <string.h>
 
 #include "./btree_settings.h"
+#include "./mem.h"
 #include "./search.h"
 
 /// LOGGER
@@ -36,7 +37,7 @@ bool btree_node_leaf_init(
 #endif
     BTreeNode** node_ptr)
 {
-    BTreeNode* node = (BTreeNode*)malloc(sizeof(BTreeNode));
+    BTreeNode* node = (BTreeNode*)jl_btree_malloc(sizeof(BTreeNode));
     if (node == NULL)
     {
         return false;
@@ -50,11 +51,11 @@ bool btree_node_leaf_init(
     btree_node_set_curr_size(node, 0);
     btree_node_set_num_children(node, 0);
 
-    BTreeKey* keys_ptr =
-        (BTreeKey*)malloc(sizeof(BTreeKey) * btree_node_node_size(node));
+    BTreeKey* keys_ptr = (BTreeKey*)jl_btree_malloc(
+        sizeof(BTreeKey) * btree_node_node_size(node));
     if (keys_ptr == NULL)
     {
-        free(node);
+        jl_btree_free(node);
         return 0;
     }
 
@@ -86,7 +87,7 @@ int btree_node_intl_init(
 #endif
     BTreeNode** node_ptr)
 {
-    BTreeNode* node = (BTreeNode*)malloc(sizeof(BTreeNode));
+    BTreeNode* node = (BTreeNode*)jl_btree_malloc(sizeof(BTreeNode));
     if (node == NULL)
     {
         return false;
@@ -100,11 +101,11 @@ int btree_node_intl_init(
     btree_node_set_curr_size(node, 0);
     btree_node_set_num_children(node, 0);
 
-    BTreeKey* keys_ptr =
-        (BTreeKey*)malloc(sizeof(BTreeKey) * btree_node_node_size(node));
+    BTreeKey* keys_ptr = (BTreeKey*)jl_btree_malloc(
+        sizeof(BTreeKey) * btree_node_node_size(node));
     if (keys_ptr == NULL)
     {
-        free(node);
+        jl_btree_free(node);
         return 0;
     }
 
@@ -113,12 +114,12 @@ int btree_node_intl_init(
     btree_node_set_left_sib(node, NULL);
     btree_node_set_right_sib(node, NULL);
 
-    BTreeNode** children_ptr = (BTreeNode**)malloc(
+    BTreeNode** children_ptr = (BTreeNode**)jl_btree_malloc(
         sizeof(BTreeNode*) * (btree_node_node_size(node) + 1));
     if (children_ptr == NULL)
     {
-        free((*node_ptr)->keys);
-        free((*node_ptr));
+        jl_btree_free((*node_ptr)->keys);
+        jl_btree_free((*node_ptr));
         return 0;
     }
 
@@ -154,15 +155,15 @@ void btree_node_kill(BTreeNode* node)
     {
         if (btree_node_children(node) != NULL)
         {
-            free(btree_node_children(node));
+            jl_btree_free(btree_node_children(node));
         }
 
         if (btree_node_keys(node) != NULL)
         {
-            free(btree_node_keys(node));
+            jl_btree_free(btree_node_keys(node));
         }
 
-        free(node);
+        jl_btree_free(node);
     }
 }
 
@@ -299,36 +300,6 @@ size_t find_idx_of_min_key_greater_than_val(BTreeNode* node, BTreeKey key)
     if (btree_node_get_key(node, idx) < key) idx += 1;
 
     return idx;
-}
-
-/// REMOVE, INSERT KEY/CHILD
-
-static void btree_node_shift_children(
-    BTreeNode* node, size_t start, size_t len, size_t offset, bool forward)
-{
-    assert(len > 0);
-
-    if (forward)
-    {
-        for (size_t i = len - 1; i > 0; i--)
-            btree_node_set_child(node, i + start + offset,
-                btree_node_get_child(node, i + start));
-
-        btree_node_set_child(
-            node, start + offset, btree_node_get_child(node, start));
-    }
-    else if (offset != 0)  // backward
-    {
-        if (start < offset)
-        {
-            log_message("Underflow risk", __LINE__);
-            return;
-        }
-
-        for (size_t i = 0; i < len; i++)
-            btree_node_set_child(node, i + start - offset,
-                btree_node_get_child(node, i + start));
-    }
 }
 
 /// PUSH/POP PRIMITIVES: btree_node_(pop|push)_(front|back)_(key|child)

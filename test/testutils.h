@@ -19,7 +19,7 @@ typedef struct BTreeCmpSettings
     char* log_file_path;
 } BTreeCmpSettings;
 
-void testutils_init();
+void testutils_init(void);
 
 int btree_node_is_valid_partial(BTreeNode* node, char** err_msg);
 

@@ -1,29 +1,33 @@
-#include <stdio.h>
-#include <string.h>
-#include <stdlib.h>
 #include <stdarg.h>
-#include "./btree.h"
-#include "./printutils.h"
-#include "./btree_print.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
 #include "./btree_tests.h"
 
 #define btree_keep_unused_mem_clean
 
-int RunTests() {
+int RunTests(void)
+{
+    if (!TestBTreeInsert())
+    {
+        return 0;
+    }
 
-  if (!TestBTreeNodeInsertImpl()) { return 0; }
+    if (!TestBTreeDelete())
+    {
+        return 0;
+    }
 
-  if (!TestBTreeNodeDeleteImpl()) { return 0; }
-
-  return 1;
+    return 1;
 }
 
+int main(void)
+{
+    if (!RunTests())
+    {
+        return 1;
+    }
 
-int main() {
-
-  if (!RunTests()) { return 1; }
-  
- 
-
-  return 0;
+    return 0;
 }

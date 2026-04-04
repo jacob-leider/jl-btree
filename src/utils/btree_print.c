@@ -4,16 +4,16 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#include "btree.h"
-#include "btree_node.h"
+#include "./core/btree.h"
+#include "./core/btree_node.h"
 #include "printutils.h"
 
 void btree_node_print(BTreeNode* node)
 {
-    printf("BTreeNode (%p)\n", node);
+    printf("BTreeNode (%p)\n", (void*)node);
     printf("\tnode type: %s\n", btree_node_is_leaf(node) ? "Leaf" : "Intl");
-    printf("\tcapacity:  %d\n", btree_node_node_size(node));
-    printf("\tcurrent:   %d\n", btree_node_curr_size(node));
+    printf("\tcapacity:  %llu\n", btree_node_node_size(node));
+    printf("\tcurrent:   %lu\n", btree_node_curr_size(node));
     printf("\telements:  ");
     printArr(node->keys, btree_node_curr_size(node));
 }
@@ -30,8 +30,8 @@ void printNodeKeys(BTreeNode* node)
 void btree_node_print_and_point(BTreeNode* node, int pos)
 {
     printf("BTreeNode\n");
-    printf("\tcapacity: %d\n", btree_node_node_size(node));
-    printf("\tcurrent: %d\n", btree_node_curr_size(node));
+    printf("\tcapacity: %llu\n", btree_node_node_size(node));
+    printf("\tcurrent: %lu\n", btree_node_curr_size(node));
     printf("\telements: ");
     printArr(node->keys, btree_node_curr_size(node));
     printf("\t          ");

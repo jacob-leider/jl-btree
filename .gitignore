@@ -51,3 +51,9 @@
 # bin/
 # obj/
 .vscode/*
+.clang-format
+
+# Other
+
+# Honestly this should never be in the project root
+err_log.txt 

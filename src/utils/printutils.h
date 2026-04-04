@@ -1,4 +1,7 @@
 // General array printing.
+//
+// @author Jacob Leider
+// Last revised: 03/26
 
 #ifndef __PRINTUTILS_GENERAL_H__
 #define __PRINTUTILS_GENERAL_H__
@@ -6,8 +9,8 @@
 #include <stdio.h>
 
 // For fancy printing
-#define COLOR_BOLD "\e[1m"
-#define COLOR_OFF "\e[m"
+#define COLOR_BOLD "\033[1m"
+#define COLOR_OFF "\033[m"
 #define RESET "\033[0m"
 #define BLACK "\033[30m"              /* Black */
 #define RED "\033[31m"                /* Red */

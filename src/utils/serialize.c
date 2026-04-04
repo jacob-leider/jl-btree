@@ -8,13 +8,12 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "./btree.h"
-#include "./btree_node.h"
 #include "./btree_print.h"
+#include "./core/btree.h"
+#include "./core/btree_node.h"
 #include "./printutils.h"
 #include "./stack.h"
 
-static int min(int a, int b) { return a <= b ? a : b; }
 static int max(int a, int b) { return a <= b ? b : a; }
 
 typedef enum TokenType
@@ -46,11 +45,13 @@ typedef struct String
     size_t idx;
 } String;
 
-LexerSettings* default_lexer_settings()
+LexerSettings* default_lexer_settings(void)
 {
-    const static LexerSettings settings = {.enforce_charset_restriction = true,
-        .enforce_node_size_limit                                        = true,
-        .enforce_number_syntax_rules                                    = true};
+    static LexerSettings settings = {
+        .enforce_charset_restriction = true,
+        .enforce_node_size_limit     = true,
+        .enforce_number_syntax_rules = true,
+    };
 
     return &settings;
 }
@@ -94,7 +95,7 @@ static int StrFromTreeR(BTreeNode* root, String* string)
 {
     if (!str_append(string, "(", 1)) return 0;
 
-    for (int i = 0; i < btree_node_curr_size(root); i++)
+    for (size_t i = 0; i < btree_node_curr_size(root); i++)
     {
         if (!btree_node_is_leaf(root))
         {
@@ -102,19 +103,19 @@ static int StrFromTreeR(BTreeNode* root, String* string)
             if (child == NULL)
             {
                 printf("SERIALIZATION ERROR\n");
-                printf("child %d of current node is null. Current node:\n", i);
+                printf("child %lu of current node is null. Current node:\n", i);
                 btree_node_print(root);
 
-                for (int j = i + 1; j <= btree_node_curr_size(root); j++)
+                for (size_t j = i + 1; j <= btree_node_curr_size(root); j++)
                 {
                     BTreeNode* sib = btree_node_get_child(root, j);
                     if (sib == NULL)
                     {
-                        printf(" -- Also null: child %d\n", j);
+                        printf(" -- Also null: child %lu\n", j);
                     }
                     else
                     {
-                        printf(" -- Child %d is NOT null: ", j);
+                        printf(" -- Child %lu is NOT null: ", j);
                         printArr(sib->keys, btree_node_curr_size(sib));
                     }
                 }
@@ -139,20 +140,20 @@ static int StrFromTreeR(BTreeNode* root, String* string)
                 if (child == NULL)
                 {
                     printf("SERIALIZATION ERROR\n");
-                    printf("child %d of current node is null. Current node:\n",
+                    printf("child %lu of current node is null. Current node:\n",
                         i + 1);
                     btree_node_print(root);
 
-                    for (int j = i + 2; j <= btree_node_curr_size(root); j++)
+                    for (size_t j = i + 2; j <= btree_node_curr_size(root); j++)
                     {
                         BTreeNode* sib = btree_node_get_child(root, j);
                         if (sib == NULL)
                         {
-                            printf(" -- Also null: child %d\n", j);
+                            printf(" -- Also null: child %lu\n", j);
                         }
                         else
                         {
-                            printf(" -- Child %d is NOT null: ", j);
+                            printf(" -- Child %lu is NOT null: ", j);
                             printArr(sib->keys, btree_node_curr_size(sib));
                         }
                     }
@@ -175,7 +176,7 @@ static int StrFromTreeR(BTreeNode* root, String* string)
             if (child == NULL)
             {
                 printf("SERIALIZATION ERROR\n");
-                printf("child %d of current node is null. Current node:\n",
+                printf("child %lu of current node is null. Current node:\n",
                     btree_node_curr_size(root));
                 btree_node_print(root);
                 return 0;
@@ -196,9 +197,11 @@ static int StrFromTreeR(BTreeNode* root, String* string)
  *
  * @return 1 on success, 0 on failure
  */
-char* StrFromTree(BTreeNode* root)
+char* StrFromTree(BTree* tree)
 {
-    String s = {NULL, 0, 0};
+    BTreeNode* root = tree->root;
+
+    String s        = {NULL, 0, 0};
     if (!StrFromTreeR(root, &s))
     {
         printf("failed to serialize tree\n");
@@ -224,7 +227,6 @@ int validate_string_and_compute_n_tokens(
 
     int idx                 = 0;
     int n_tokens            = 0;
-    int curr_node_size      = 0;
     int depth               = 1;
     TokenType last_tok_type = 0;
     int max_depth           = 1;
@@ -456,10 +458,13 @@ bool tokenize_tree_str(const char* s,
 DeserializationSettings defaut_deserialization_settings(int node_size)
 {
     const DeserializationSettings settings = {
-        .node_size = node_size, .lexer_settings = default_lexer_settings()};
+        .node_size                        = node_size,
+        .fail_when_validation_cant_happen = false,
+        .lexer_settings                   = default_lexer_settings(),
+    };
 
     return settings;
-};
+}
 
 typedef struct ParseContext
 {
@@ -477,7 +482,7 @@ typedef struct ParseContext
  * @return [TODO:return]
  */
 bool ProvideParseContext(Token* tok_seq,
-    int n_tokens,
+    size_t n_tokens,
     DeserializationSettings* settings,
     ParseContext* parse_ctx,
     char** err_msg_ptr)
@@ -494,7 +499,7 @@ bool ProvideParseContext(Token* tok_seq,
 
     BTreeKey last_key      = INT_MIN;
 
-    bool enforce_key_order = settings->lexer_settings.enforce_key_order;
+    bool enforce_key_order = settings->lexer_settings->enforce_key_order;
 
     for (size_t idx = 0; idx < n_tokens; idx++)
     {
@@ -556,10 +561,8 @@ bool ProvideParseContext(Token* tok_seq,
  *
  * @return 1 on success, 0 on failure (it will also scream at you on failure)
  */
-int TreeFromStr(const char* str,
-    int len,
-    DeserializationSettings* settings,
-    BTreeNode** root_ptr)
+int TreeFromStr(
+    const char* str, int len, DeserializationSettings* settings, BTree* tree)
 {
     // Validate settings
     if (settings->node_size < 1)
@@ -570,11 +573,16 @@ int TreeFromStr(const char* str,
         return 0;
     }
 
+    if (settings->lexer_settings == NULL)
+    {
+        settings->lexer_settings = default_lexer_settings();
+    }
+
     int n_tokens   = 0;
     char* err      = NULL;
     Token* tok_seq = NULL;
     if (!tokenize_tree_str(str, len, &tok_seq, &n_tokens,
-            &settings->lexer_settings, settings->node_size, &err))
+            settings->lexer_settings, settings->node_size, &err))
     {
         printf("Deserialization error. Details: \t- %s\n", err);
         return 0;
@@ -652,7 +660,7 @@ int TreeFromStr(const char* str,
         }
     }
 
-    *root_ptr = root;
+    tree->root = root;
 
     return 1;
 }

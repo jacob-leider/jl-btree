@@ -8,5 +8,8 @@
   "other": {
     "help": "I need somebody", 
     "uniode test": "\r escaped unicode test: \u263A"
-  }
+  },
+  "list": [1, 2, 3, {
+    "nested": "object"
+  }]
 }

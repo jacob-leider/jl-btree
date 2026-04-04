@@ -1,18 +1,13 @@
 #include "delete.h"
 
 #include <assert.h>
-#include <limits.h>
 #include <stdbool.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
 
-#include "btree.h"
 #include "btree_node.h"
 #include "btree_settings.h"
-#include "printutils.h"
+#include "contains.h"
+#include "mem.h"
 #include "search.h"
-#include "stack.h"
 
 ////////////////////////////////// Purpose /////////////////////////////////////
 ///
@@ -55,11 +50,8 @@ static size_t compute_child_idx(BTreeNode* node, BTreeKey key, bool* found_key)
     size_t child_idx = 0;
     *found_key       = 0;
 
-    if (btree_node_curr_size(node) == 0)
-    {
-        // Error. Subtracting 1 causes underflow.
-        printf("Underflow risk in %s at line %d\n", __FILE__, __LINE__);
-    }
+    // Error. Subtracting 1 causes underflow.
+    assert(btree_node_curr_size(node) > 0);
 
     if (btree_node_get_key(node, btree_node_curr_size(node) - 1) < key)
     {
@@ -90,7 +82,7 @@ static size_t compute_child_idx(BTreeNode* node, BTreeKey key, bool* found_key)
             child_idx += 1;
 #if REDUNDANT < 1
         }
-#endif endregion
+#endif
     }
 
     return child_idx;
@@ -131,35 +123,6 @@ static bool btree_node_can_spare_or_borrow_key(
     BTreeNode* left  = NULL;
     BTreeNode* right = NULL;
     btree_node_get_sibs(node, child_idx, &left, &right);
-
-    if (btree_node_left_sib(node) != left)
-    {
-        printf("Left sib not stored on node\n");
-
-        printf("\t-Node: ");
-        printArr(btree_node_keys(node), btree_node_curr_size(node));
-
-        printf("\t-Stored: ");
-        if (btree_node_left_sib(node) != NULL)
-        {
-            printArr(btree_node_keys(btree_node_left_sib(node)),
-                btree_node_curr_size(btree_node_left_sib(node)));
-        }
-        else
-        {
-            printf("NULL\n");
-        }
-
-        printf("\t-Actual: ");
-        if (left != NULL)
-        {
-            printArr(btree_node_keys(left), btree_node_curr_size(left));
-        }
-        else
-        {
-            printf("NULL\n");
-        }
-    }
 
     if (btree_node_left_sib(node) != NULL &&
         btree_node_over_min_cap(btree_node_left_sib(node)))
@@ -248,11 +211,14 @@ BTreeNodeSib compute_rotate_hint(BTreeNode* node, size_t child_idx)
 
 typedef struct BTreeNodeDeleteState
 {
-    Stack* child_hint_cache_stack;
-    Stack* merge_hint_cache_stack;
     BTreeNode* last_over_min_cap_anc;
     size_t child_idx;
     size_t last_child_idx;
+    // New
+    size_t* child_hint_cache;
+    BTreeNodeSib* merge_hint_cache;
+    size_t child_hint_cache_index;
+    size_t merge_hint_cache_index;
 } BTreeNodeDeleteState;
 
 /**
@@ -335,14 +301,13 @@ typedef struct BTreeNodeDeleteState
  */
 static bool update_vars(BTreeNode* ptr, BTreeNodeDeleteState* state)
 {
+    BTreeNodeSib merge_hint = UNDEFINED;
     // Deref
-    BTreeNodeSib merge_hint          = UNDEFINED;
-    Stack* merge_hint_cache_stack    = state->merge_hint_cache_stack;
-    Stack* child_hint_cache_stack    = state->child_hint_cache_stack;
-    BTreeNode* last_over_min_cap_anc = state->last_over_min_cap_anc;
-    size_t last_child_idx            = state->last_child_idx;
-    size_t child_idx                 = state->child_idx;
-    size_t child_idx_after_merge     = state->child_idx;
+    size_t last_child_idx          = state->last_child_idx;
+    size_t child_idx               = state->child_idx;
+    size_t child_idx_after_merge   = state->child_idx;
+    size_t* child_hint_cache       = state->child_hint_cache;
+    BTreeNodeSib* merge_hint_cache = state->merge_hint_cache;
 
     // ALWAYS decrement this. The pred-leaf loses a key, and `ptr` will always
     // have the pred-leaf as a descendant.
@@ -350,16 +315,14 @@ static bool update_vars(BTreeNode* ptr, BTreeNodeDeleteState* state)
 
     if (btree_node_can_spare_or_borrow_key(ptr, last_child_idx))
     {
-        last_over_min_cap_anc = ptr;
-
-        stack_clear(merge_hint_cache_stack);
+        state->last_over_min_cap_anc = ptr;
 
         // Store the child-index of this node in case this node needs to borrow
         // a sibling.
-        size_t stack_top = 0;
-        stack_get_top(child_hint_cache_stack, &stack_top);
-        stack_clear(child_hint_cache_stack);
-        stack_push(child_hint_cache_stack, &stack_top);
+        size_t stack_top = child_hint_cache[state->child_hint_cache_index];
+        state->child_hint_cache_index                   = 0;
+        child_hint_cache[state->child_hint_cache_index] = stack_top;
+        state->child_hint_cache_index += 1;
 
         merge_hint = compute_rotate_hint(ptr, last_child_idx);
 
@@ -380,11 +343,9 @@ static bool update_vars(BTreeNode* ptr, BTreeNodeDeleteState* state)
         // after the next node, so no change to its child index.
         if (merge_hint == LEFT)
         {
-            if (last_child_idx == 0)
-            {
-                printf("Underflow risk in %s at line %d\n", __FILE__, __LINE__);
-                return false;
-            }
+            // Underflow risk.
+            // TODO: Check this at prod runtime
+            assert(last_child_idx > 0);
 
             BTreeNode* left_sib =
                 btree_node_get_child(btree_node_par(ptr), last_child_idx - 1);
@@ -394,19 +355,21 @@ static bool update_vars(BTreeNode* ptr, BTreeNodeDeleteState* state)
     }
 
     // Update merge hint cache
-    if (!stack_push(merge_hint_cache_stack, &merge_hint))
+    if (state->merge_hint_cache_index < DEFAULT_MERGE_HINT_CACHE_SIZE)
     {
-        return false;
+        merge_hint_cache[state->merge_hint_cache_index] = merge_hint;
+        state->merge_hint_cache_index += 1;
     }
 
-    // Update child idx cache
-    if (!stack_push(child_hint_cache_stack, &child_idx_after_merge))
+    // Update child hint cache
+    if (state->child_hint_cache_index < DEFAULT_CHILD_HINT_CACHE_SIZE)
     {
-        return false;
+        child_hint_cache[state->child_hint_cache_index] = child_idx_after_merge;
+        state->child_hint_cache_index += 1;
     }
 
-    state->last_over_min_cap_anc = last_over_min_cap_anc;
-    state->last_child_idx        = child_idx;
+    // Update program state
+    state->last_child_idx = child_idx;
 
     return true;
 }
@@ -523,17 +486,19 @@ static bool update_vars(BTreeNode* ptr, BTreeNodeDeleteState* state)
 int btree_node_delete_key(BTreeNode* root,
     BTreeKey key,
     BTreeNode** last_over_min_cap_anc_ptr,
-    Stack* child_hint_cache_stack,
-    Stack* merge_hint_cache_stack)
+    size_t* child_hint_cache,
+    BTreeNodeSib* merge_hint_cache)
 {
     // Search for a node containing `key`
     // clang-format off
     BTreeNodeDeleteState state = {
         .last_over_min_cap_anc  = NULL,
-        .child_hint_cache_stack = child_hint_cache_stack,        
-        .merge_hint_cache_stack = merge_hint_cache_stack,
         .child_idx              = 0,
-        .last_child_idx         = 0 
+        .last_child_idx         = 0,
+        .child_hint_cache = child_hint_cache,
+        .merge_hint_cache = merge_hint_cache,
+        .child_hint_cache_index = 0,
+        .merge_hint_cache_index = 0,
     };
     // clang-format on
 
@@ -639,7 +604,7 @@ static void btree_node_rotate_left(
 {
     // append pivot and `rsib`'s first child to the back of lsib
     // replace pivot with first key of `rsib`
-    size_t rsib_first_key       = 0;
+    BTreeKey rsib_first_key     = 0;
     BTreeNode* rsib_first_child = NULL;
 
     btree_node_pop_front_key(rsib, &rsib_first_key);
@@ -742,7 +707,8 @@ static void btree_node_rotate_right(
 static void btree_node_merge_sibs(
     BTreeNode* left, BTreeNode* right, BTreeNode* par, size_t sep_idx)
 {
-    // 1. Amend left sibling
+    // ============ 1. Amend left sibling ============
+
     //     a. Keys
     btree_node_push_back_key(left, btree_node_get_key(par, sep_idx));
     btree_node_append_key_range(left, right, 0, btree_node_num_keys(right));
@@ -756,19 +722,25 @@ static void btree_node_merge_sibs(
 
     btree_node_inc_subtree_size(left, btree_node_subtree_size(right) + 1);
 
-    // 2. Amend par
+    // ================= 2. Amend par ================
+
     //     a. Keys
     btree_node_remove_key(par, sep_idx, NULL);
+
     //     b. Children
     btree_node_remove_child(par, sep_idx + 1, NULL);
 
-    // 3. Amend right sibling
+    // ============ 3. Amend right sibling ===========
+
     btree_node_kill(right);
 }
 
 int btree_node_delete_impl(
     BTreeNode* root, BTreeKey val, BTreeNode** new_root_ptr)
 {
+    // Default: root is unchanged
+    *new_root_ptr = root;
+
 #if REDUNDANT > 1
     if (root == NULL)
     {
@@ -781,37 +753,22 @@ int btree_node_delete_impl(
         return 2;
     }
 
-    Stack* child_hint_cache_stack =
-        stack_init(sizeof(size_t), DEFAULT_CHILD_IDX_CACHE_SIZE);
-    if (child_hint_cache_stack == NULL)
-    {
-        // TODO: Simply don't cache the children if this fails. Don't error out.
-        return false;
-    }
+    size_t* child_hint_cache_2 = CHILD_HINT_CACHE_MEM;
+    clear_child_hint_cache();
 
-    Stack* merge_hint_cache_stack =
-        stack_init(sizeof(BTreeNodeSib), DEFAULT_CHILD_IDX_CACHE_SIZE);
-    if (merge_hint_cache_stack == NULL)
-    {
-        // TODO: Simply don't cache the children if this fails. Don't error out.
-        return false;
-    }
+    BTreeNodeSib* merge_hint_cache_2 = MERGE_HINT_CACHE_MEM;
+    clear_merge_hint_cache();
 
     BTreeNode* ptr = NULL;
 
     if (!btree_node_delete_key(
-            root, val, &ptr, child_hint_cache_stack, merge_hint_cache_stack))
+            root, val, &ptr, child_hint_cache_2, merge_hint_cache_2))
     {
-        // TODO: Handle appropriately. This could be an OOM error or a
-        // detected race condition.
-        printf("Delete key returned 0.\n");
+        // TODO: Handle appropriately. This could be a few seperate things.
         return 0;
     }
 
-    BTreeNodeSib* merge_hint_cache = merge_hint_cache_stack->data;
-    size_t* child_hint_cache       = child_hint_cache_stack->data;
-
-    size_t chain_end_child_idx     = child_hint_cache[0];
+    size_t chain_end_child_idx = child_hint_cache_2[0];
 
     // The last routine deletes the key from the tree, and leaves a leaf
     // under min capacity. Now we need to rebalance the tree.
@@ -826,9 +783,6 @@ int btree_node_delete_impl(
         {
             // Error: root should only be squashed if it has exactly two
             // children and neither can spare a key
-            stack_kill(merge_hint_cache_stack);
-            stack_kill(child_hint_cache_stack);
-
             return 0;
         }
 
@@ -842,7 +796,7 @@ int btree_node_delete_impl(
     }
     else
     {
-        BTreeNodeSib rotate_hint = merge_hint_cache[0];
+        BTreeNodeSib rotate_hint = merge_hint_cache_2[0];
 
         // TODO: Validate that siblings are stored on ptr
 
@@ -865,9 +819,6 @@ int btree_node_delete_impl(
             else if (rotate_hint == UNDEFINED)
             {
                 // TODO: Manually determine which way to rotate
-                stack_kill(merge_hint_cache_stack);
-                stack_kill(child_hint_cache_stack);
-
                 return 0;
             }
         }
@@ -878,34 +829,28 @@ int btree_node_delete_impl(
 
     while (!btree_node_is_leaf(left))
     {
-        size_t child_idx = child_hint_cache[depth + 1];
-        left             = btree_node_get_child(left, child_idx);
         depth += 1;
 
-        // Merge
-        BTreeNode* par          = btree_node_par(left);
-        size_t sep_idx          = 0;
+        size_t child_idx        = child_hint_cache_2[depth];
+        BTreeNodeSib merge_hint = merge_hint_cache_2[depth];
 
-        BTreeNodeSib merge_hint = merge_hint_cache[depth];
+        BTreeNode* par          = left;
+
         if (merge_hint == LEFT)
         {
-            sep_idx = child_idx - 1;
-            right   = left;
-            left    = btree_node_get_child(par, sep_idx);
+            right = btree_node_get_child(par, child_idx);
+            left  = btree_node_get_child(par, child_idx - 1);
+
+            btree_node_merge_sibs(left, right, par, child_idx - 1);
         }
         else if (merge_hint == RIGHT)
         {
-            sep_idx = child_idx;
-            right   = btree_node_get_child(par, sep_idx + 1);
-        }
-        // TODO: Else, error
+            left  = btree_node_get_child(par, child_idx);
+            right = btree_node_get_child(par, child_idx + 1);
 
-        btree_node_merge_sibs(left, right, par, sep_idx);
+            btree_node_merge_sibs(left, right, par, child_idx);
+        }  // TODO: Else, error
     }
-
-    // Free rebalance hint caches
-    stack_kill(merge_hint_cache_stack);
-    stack_kill(child_hint_cache_stack);
 
     return 1;
 }

@@ -2,12 +2,8 @@
 #define __BTREE_STACK_H__
 
 #include <stdbool.h>
-#include <stddef.h>
-#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
-
-#include "./btree_settings.h"
 
 typedef struct Stack
 {

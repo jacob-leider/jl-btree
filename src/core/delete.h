@@ -1,8 +1,6 @@
 #ifndef __BTREE_DELETE_H__
 #define __BTREE_DELETE_H__
 
-#include <stdbool.h>
-
 #include "./btree_node.h"
 
 typedef struct BTreeNode BTreeNode;

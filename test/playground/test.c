@@ -172,13 +172,14 @@ typedef struct Object
 
 int main()
 {
-    Object* object = NULL;
-    JsonList* list = NULL;
-    FILE* fp       = fopen("../cases/insert/test1.json", "r");
-    char* err_msg  = NULL;
+    Object* object   = NULL;
+    JsonList* list   = NULL;
+    JsonValue* value = NULL;
+    FILE* fp         = fopen("../cases/insert/test1.json", "r");
+    char* err_msg    = NULL;
     JsonSettings parse_settings;
 
-    if (!parse_json(fp, parse_settings, &object, &list, &err_msg))
+    if (!parse_json(fp, parse_settings, &value, &err_msg))
     {
         printf("Error: %s\n", err_msg == NULL ? "No error message" : err_msg);
         return 1;

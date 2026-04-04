@@ -28,34 +28,90 @@ typedef enum JsonTokenType
     JSON_TOKEN_COLON,
     JSON_TOKEN_COMMA,
     JSON_TOKEN_LEFT_BRACKET,
-    JSON_TOKEN_RBRACKET,
+    JSON_TOKEN_RIGHT_BRACKET,
     JSON_TOKEN_LEFT_SQUACKET,
     JSON_TOKEN_RIGHT_SQUACKET,
 } JsonTokenType;
 
+typedef enum JsonParentType
+{
+    JSON_PARENT_TYPE_OBJECT,
+    JSON_PARENT_TYPE_LIST,
+} JsonParentType;
+
 typedef struct JsonToken
 {
     JsonTokenType type;
+
+    // For object tokens
+    size_t num_properties;
+
+    // For list tokens
+    size_t num_values;
+
+    // For both
+    size_t mem_offset;
+
+    // For string/number tokens
     size_t string_start;
     size_t string_len;
     char* data;
+
+    // TODO: This should be computed/done in the parser
     union
     {
         JsonString string;
         JsonNumber number;
     };
+
+    // Index of the left-bracket or left-squacket that opens the deepest value
+    // containing this token
+    size_t parent_token_index;
 } JsonToken;
 
-typedef struct JsonLexSettings
+typedef struct JsonParserMemoryObject
+{
+    // Tokens
+    size_t num_tokens;
+    JsonToken* tokens_mem;
+
+    // Properties
+    size_t num_properties;
+    JsonProperty* properties_mem;
+    size_t properties_offset;
+
+    // List values
+    size_t num_values;
+    JsonValue* values_mem;
+    size_t values_offset;
+
+    // Path stack
+    size_t path_stack_capacity;
+    JsonCursor* path_stack_mem;
+} JsonParserMemoryObject;
+
+typedef struct JsonLexerSettings
 {
     bool make_seq;
-} JsonLexSettings;
+} JsonLexerSettings;
 
-typedef struct JsonLexState
+typedef struct JsonLexerInfo
+{
+    JsonLexerSettings settings;
+    size_t max_depth;
+    JsonParserMemoryObject* mem_obj;
+} JsonLexerInfo;
+
+typedef struct JsonLexerState
 {
     // Either in a string, in a number, or in nothing
     bool in_string;
     bool in_number;
+
+    // Parent is a list
+    JsonParentType* parent_type_stack;
+    size_t parent_type_stack_size;
+    size_t parent_type_stack_capacity;
 
     // e.g. if we've parsed "\u00", `escaped` is true and `escape_seq_index` is
     // 2
@@ -68,22 +124,25 @@ typedef struct JsonLexState
     size_t string_start;
     size_t string_len;
 
-    // Object depth. Whether or not we've added support for arrays when you're
-    // reading this, if we've parsed this far
+    // Object depth.
+    // e.g. If we've parsed this far
     //
     //          "{[{ ... }]}"
     //             ^
     //
-    // `depth` would be set to 2.
+    // `depth` would be set to 3.
     size_t depth;
     size_t max_depth;
 
+    // Index of the last '{' or '[' we encountered
+    size_t last_object_or_list_token_index;
+
     FILE* fp;
-    size_t tok_idx;
+    size_t token_index;
 
-    JsonLexSettings settings;
+    JsonLexerSettings settings;
 
-} JsonLexState;
+} JsonLexerState;
 
 void json_tok_destroy(JsonToken* tok)
 {
@@ -95,7 +154,7 @@ void json_tok_destroy(JsonToken* tok)
     free(tok);
 }
 
-static bool lex_state_is_valid(JsonLexState state)
+static bool lex_state_is_valid(JsonLexerState state)
 {
     if (!state.in_string && state.escaped)
     {
@@ -125,7 +184,7 @@ static const char* json_tok_type_to_sting(JsonToken tok)
     if (tok.type == JSON_TOKEN_COMMA) return "Comma";
     if (tok.type == JSON_TOKEN_COLON) return "Colon";
     if (tok.type == JSON_TOKEN_LEFT_BRACKET) return "Left bracket";
-    if (tok.type == JSON_TOKEN_RBRACKET) return "Right bracket";
+    if (tok.type == JSON_TOKEN_RIGHT_BRACKET) return "Right bracket";
     if (tok.type == JSON_TOKEN_LEFT_SQUACKET) return "Left square bracket";
     if (tok.type == JSON_TOKEN_RIGHT_SQUACKET) return "Right square bracket";
     return "Null";
@@ -163,15 +222,15 @@ static bool can_unescaped_char(char unescaped)
            unescaped == '/';
 }
 
-static bool add_tok(JsonLexState* state,
+static bool add_tok(JsonLexerState* state,
     JsonToken* seq,
     JsonTokenType tok_type,
-    size_t num_toks,
+    JsonLexerInfo* info,
     char** err_msg)
 {
-    if (state->settings.make_seq)
+    if (info->settings.make_seq)
     {
-        if (state->tok_idx == num_toks)
+        if (state->token_index == info->mem_obj->num_tokens)
         {
             // Too many tokens
             *err_msg = "Too many tokens!";
@@ -179,13 +238,49 @@ static bool add_tok(JsonLexState* state,
             return false;
         }
 
-        seq[state->tok_idx].type = tok_type;
-        seq[state->tok_idx].data = NULL;
+        JsonToken* current_token = seq + state->token_index;
+
+        current_token->type      = tok_type;
+        current_token->data      = NULL;
+
+        // Compute parent token
+        size_t prev_depth         = 0;
+        bool found_parent         = false;
+        bool parent_is_list       = false;
+        size_t parent_token_index = 0;
+        for (size_t offset = 0; offset < state->token_index; offset++)
+        {
+            JsonToken* prev = seq + (state->token_index - 1 - offset);
+
+            if (prev->type == JSON_TOKEN_RIGHT_BRACKET ||
+                JSON_TOKEN_RIGHT_SQUACKET)
+            {
+                prev_depth += 1;
+            }
+            else if (prev->type == JSON_TOKEN_LEFT_BRACKET ||
+                     JSON_TOKEN_LEFT_SQUACKET)
+            {
+                if (prev_depth == 0)
+                {
+                    // This is the parent
+                    found_parent       = true;
+                    parent_is_list     = prev->type == JSON_TOKEN_LEFT_SQUACKET;
+                    parent_token_index = (state->token_index - 1 - offset);
+                    break;
+                }
+                prev_depth -= 1;
+            }
+        }
+
+        if (found_parent)
+        {
+            current_token->parent_token_index = parent_token_index;
+        }
 
         if (tok_type == JSON_TOKEN_STRING || tok_type == JSON_TOKEN_NUMBER)
         {
-            seq[state->tok_idx].string_len   = state->string_len;
-            seq[state->tok_idx].string_start = state->string_start;
+            current_token->string_len   = state->string_len;
+            current_token->string_start = state->string_start;
 
             // Save file position
             size_t fpos = ftell(state->fp);
@@ -207,54 +302,143 @@ static bool add_tok(JsonLexState* state,
                 buff[i] = c;
             }
 
-            seq[state->tok_idx].data = buff;
+            current_token->data = buff;
 
             // Go back to current pos
             fseek(state->fp, fpos, SEEK_SET);
         }
     }
 
-    state->tok_idx += 1;
+    // Check for a new list value so we can update the parser's memory object
+
+    // Note that this happens BEFORE we update the parent property stack to
+    // prevent opening and closing brackets for the same value (object value or
+    // list value) to be counted as seperate values
+
+    bool has_parent     = false;
+    bool parent_is_list = false;
+    if (state->parent_type_stack_size > 0)
+    {
+        JsonParentType parent_type =
+            state->parent_type_stack[state->parent_type_stack_size - 1];
+
+        has_parent     = true;
+        parent_is_list = parent_type == JSON_PARENT_TYPE_LIST;
+    }
+
+    // TODO: This logic could really use a refactor
+    if (tok_type != JSON_TOKEN_COMMA && tok_type != JSON_TOKEN_RIGHT_SQUACKET &&
+        has_parent && parent_is_list && !info->settings.make_seq)
+    {
+        // If we're in a list and we parsed a token that ISN'T a comma or
+        // closing squacket, this must be a new list value
+        info->mem_obj->num_values += 1;
+    }
+
+    // NOW we update the parent type stack
+
+    if (tok_type == JSON_TOKEN_RIGHT_BRACKET)
+    {
+        // TODO: Check this at runtime
+        assert(state->parent_type_stack_size > 0);
+
+        state->parent_type_stack_size -= 1;
+    }
+    else if (tok_type == JSON_TOKEN_RIGHT_SQUACKET)
+    {
+        // TODO: Check this at runtime
+        assert(state->parent_type_stack_size > 0);
+
+        state->parent_type_stack_size -= 1;
+    }
+    else if (tok_type == JSON_TOKEN_LEFT_BRACKET)
+    {
+        // TODO: Check this at runtime
+        assert(
+            state->parent_type_stack_size < state->parent_type_stack_capacity);
+
+        state->parent_type_stack_size += 1;
+        state->parent_type_stack[state->parent_type_stack_size - 1] =
+            JSON_PARENT_TYPE_OBJECT;
+    }
+    else if (tok_type == JSON_TOKEN_LEFT_SQUACKET)
+    {
+        // TODO: Check this at runtime
+        assert(
+            state->parent_type_stack_size < state->parent_type_stack_capacity);
+
+        state->parent_type_stack_size += 1;
+        state->parent_type_stack[state->parent_type_stack_size - 1] =
+            JSON_PARENT_TYPE_LIST;
+    }
+
+    state->token_index += 1;
 
     return true;
 }
 
-// This has two modes: count and build. Count determines how many tokens this
-// will need, build assumes you know the number of tokens already and tokenizes
-// the contents of the file.
-bool json_lex(FILE* fp,
-    size_t* num_toks_ptr,
-    bool make_seq,
-    JsonToken** seq_ptr,
-    char** err_msg,
-    JsonLexState* state_ptr)
+/**
+ * @brief Tokenize (or prepare for tokenization) a JSON string
+ *
+ * @details This function has two modes count and build. The mode is determined
+ * by `settings.make_seq.`  Count determines how many tokens this will need,
+ * build assumes you know the number of tokens already and tokenizes the
+ * contents of the file.
+ *
+ * This should be able to compute all memory requirements: Number of tokens,
+ * number of properties, number of values. On the second pass, it should also be
+ * able to compute the number of properties for each object.
+ *
+ * @param fp File descriptor to a JSON file
+ * @param info[in/out] Lexer info object
+ * @param err_msg[out] Error message populated on failure
+ * @return [TODO:return]
+ */
+bool json_lex(FILE* fp, JsonLexerInfo* info, char** err_msg)
 {
-    JsonLexSettings settings = {
-        .make_seq = make_seq,
+    printf("---------- Json lexer ----------\n");
+    printf("\tMake seq: %s\n", info->settings.make_seq ? "True" : "False");
+    printf("\tNumber of tokens: %d\n", info->mem_obj->num_tokens);
+    printf("\tLog:\n");
+
+    // TODO: Make this a constant
+    const size_t default_parent_type_stack_capacity = 32;
+    static JsonParentType
+        parent_type_stack_mem[default_parent_type_stack_capacity];
+
+    JsonLexerState state = {
+        .in_string                       = false,
+        .in_number                       = false,
+        .parent_type_stack               = parent_type_stack_mem,
+        .parent_type_stack_size          = 0,
+        .parent_type_stack_capacity      = default_parent_type_stack_capacity,
+        .escaped                         = false,
+        .string_start                    = 0,
+        .string_len                      = 0,
+        .depth                           = 0,
+        .token_index                     = 0,
+        .fp                              = fp,
+        .depth                           = 0,
+        .max_depth                       = 0,
+        .last_object_or_list_token_index = 0,
     };
 
-    JsonLexState state = {
-        .in_string    = false,
-        .escaped      = false,
-        .in_number    = false,
-        .string_start = 0,
-        .string_len   = 0,
-        .depth        = 0,
-        .tok_idx      = 0,
-        .settings     = settings,
-        .fp           = fp,
-        .depth        = 0,
-        .max_depth    = 0,
-    };
+    if (!info->settings.make_seq)
+    {
+        // Prepare memory object
+        info->mem_obj->num_properties = 0;
+        info->mem_obj->num_values     = 0;
+    }
 
     size_t num_toks = 0;
 
     JsonToken* seq  = NULL;
-    if (make_seq)
+    if (info->settings.make_seq)
     {
         // Build token sequence
-        num_toks = *num_toks_ptr;
-        seq      = (JsonToken*)malloc(num_toks * sizeof(JsonToken));
+        num_toks = info->mem_obj->num_tokens;
+        seq      = info->mem_obj->tokens_mem;
+        printf("\t- Allocated memory for %d tokens\n", num_toks);
     }
 
     // Round 2: Build token sequence
@@ -321,8 +505,7 @@ bool json_lex(FILE* fp,
                     // =========
                     // New token
                     // =========
-                    if (!add_tok(
-                            &state, seq, JSON_TOKEN_STRING, num_toks, err_msg))
+                    if (!add_tok(&state, seq, JSON_TOKEN_STRING, info, err_msg))
                     {
                         return false;
                     }
@@ -347,10 +530,16 @@ bool json_lex(FILE* fp,
         {
             if (c == ':')
             {
+                if (!state.settings.make_seq)
+                {
+                    // Colons map 1-to-1 onto properties
+                    info->mem_obj->num_properties += 1;
+                }
+
                 // =========
                 // New token
                 // =========
-                if (!add_tok(&state, seq, JSON_TOKEN_COLON, num_toks, err_msg))
+                if (!add_tok(&state, seq, JSON_TOKEN_COLON, info, err_msg))
                 {
                     return false;
                 }
@@ -361,8 +550,7 @@ bool json_lex(FILE* fp,
                 {
                     state.in_number = false;
 
-                    if (!add_tok(
-                            &state, seq, JSON_TOKEN_NUMBER, num_toks, err_msg))
+                    if (!add_tok(&state, seq, JSON_TOKEN_NUMBER, info, err_msg))
                     {
                         return 0;
                     }
@@ -371,7 +559,7 @@ bool json_lex(FILE* fp,
                 // =========
                 // New token
                 // =========
-                if (!add_tok(&state, seq, JSON_TOKEN_COMMA, num_toks, err_msg))
+                if (!add_tok(&state, seq, JSON_TOKEN_COMMA, info, err_msg))
                 {
                     return false;
                 }
@@ -393,8 +581,8 @@ bool json_lex(FILE* fp,
                 // =========
                 // New token
                 // =========
-                if (!add_tok(&state, seq, JSON_TOKEN_LEFT_BRACKET, num_toks,
-                        err_msg))
+                if (!add_tok(
+                        &state, seq, JSON_TOKEN_LEFT_BRACKET, info, err_msg))
                 {
                     return false;
                 }
@@ -405,8 +593,7 @@ bool json_lex(FILE* fp,
                 {
                     state.in_number = false;
 
-                    if (!add_tok(
-                            &state, seq, JSON_TOKEN_NUMBER, num_toks, err_msg))
+                    if (!add_tok(&state, seq, JSON_TOKEN_NUMBER, info, err_msg))
                     {
                         return 0;
                     }
@@ -418,7 +605,7 @@ bool json_lex(FILE* fp,
                 // New token
                 // =========
                 if (!add_tok(
-                        &state, seq, JSON_TOKEN_RBRACKET, num_toks, err_msg))
+                        &state, seq, JSON_TOKEN_RIGHT_BRACKET, info, err_msg))
                 {
                     return false;
                 }
@@ -428,8 +615,8 @@ bool json_lex(FILE* fp,
                 // =========
                 // New token
                 // =========
-                if (!add_tok(&state, seq, JSON_TOKEN_LEFT_SQUACKET, num_toks,
-                        err_msg))
+                if (!add_tok(
+                        &state, seq, JSON_TOKEN_LEFT_SQUACKET, info, err_msg))
                 {
                     return false;
                 }
@@ -440,8 +627,7 @@ bool json_lex(FILE* fp,
                 {
                     state.in_number = false;
 
-                    if (!add_tok(
-                            &state, seq, JSON_TOKEN_NUMBER, num_toks, err_msg))
+                    if (!add_tok(&state, seq, JSON_TOKEN_NUMBER, info, err_msg))
                     {
                         return 0;
                     }
@@ -450,8 +636,8 @@ bool json_lex(FILE* fp,
                 // =========
                 // New token
                 // =========
-                if (!add_tok(&state, seq, JSON_TOKEN_RIGHT_SQUACKET, num_toks,
-                        err_msg))
+                if (!add_tok(
+                        &state, seq, JSON_TOKEN_RIGHT_SQUACKET, info, err_msg))
                 {
                     return false;
                 }
@@ -479,8 +665,7 @@ bool json_lex(FILE* fp,
                     // =========
                     // New token
                     // =========
-                    if (!add_tok(
-                            &state, seq, JSON_TOKEN_NUMBER, num_toks, err_msg))
+                    if (!add_tok(&state, seq, JSON_TOKEN_NUMBER, info, err_msg))
                     {
                         return false;
                     }
@@ -501,16 +686,18 @@ bool json_lex(FILE* fp,
         assert(lex_state_is_valid(state));
     }
 
-    if (make_seq)
+    if (info->settings.make_seq)
     {
-        *seq_ptr = seq;
+        info->mem_obj->tokens_mem = seq;
     }
     else
     {
-        *num_toks_ptr = state.tok_idx;
-    }
+        info->mem_obj->num_tokens          = state.token_index;
+        info->mem_obj->path_stack_capacity = state.max_depth;
 
-    *state_ptr = state;
+        // TODO: Do we still need this?
+        info->max_depth = state.max_depth;
+    }
 
     return true;
 }
@@ -529,6 +716,16 @@ int hex_to_nibble(char c)
     return d;
 }
 
+/**
+ * @brief Parse a JSON string
+ *
+ * @param escaped_str[in] String we treat as escaped
+ * @param str[out] Pointer to output data
+ * @param escaped_str_len Length of `escaped_str`
+ * @param len Expected length of the output
+ * @param err_msg Error message populated on failure
+ * @return True on success, false otherwise
+ */
 bool parse_json_string(const char* escaped_str,
     char* str,
     size_t escaped_str_len,
@@ -1095,8 +1292,8 @@ exponent:
 typedef enum JsonState
 {
     // Allowed tokens: left bracket, left squacket
-    PARSE_STATE_INITIAL_STATE,
-    // Allowed tokens: string (property name), right bracket
+    PARSE_STATE_INITIAL_STATE,  // Allowed tokens: string (property name), right
+                                // bracket
     PARSE_STATE_OBJECT_AFTER_LEFT_BRACKET,
     // Allowed tokens: colon
     PARSE_STATE_OBJECT_AFTER_PROPERTY_NAME,
@@ -1121,127 +1318,189 @@ typedef enum JsonState
 
 const char* parse_state_to_string(JsonState state)
 {
-    if (state == PARSE_STATE_INITIAL_STATE)
+    // clang-format off
+    switch (state)
     {
-        return "Initial State";
+        case PARSE_STATE_INITIAL_STATE:                 return "Initial State";
+        case PARSE_STATE_OUT_OF_ROOT:                   return "Out of Root";
+        case PARSE_STATE_FAIL:                          return "Failure";
+        case PARSE_STATE_OBJECT_AFTER_COLON:            return "Object, After Colon";
+        case PARSE_STATE_OBJECT_AFTER_COMMA:            return "Object, After Comma";
+        case PARSE_STATE_OBJECT_AFTER_LEFT_BRACKET:     return "Object, After Left Bracket";
+        case PARSE_STATE_OBJECT_AFTER_PROPERTY_NAME:    return "Object, After Property Name";
+        case PARSE_STATE_OBJECT_AFTER_VALUE:            return "Object, After Value";
+        case PARSE_STATE_LIST_AFTER_COMMA:              return "List, After Comma";
+        case PARSE_STATE_LIST_AFTER_LEFT_BRACKET:       return "List, After Left Bracket";
+        case PARSE_STATE_LIST_AFTER_VALUE:              return "List, After Value";
+        default:                                        return "Undefined";
     }
-    if (state == PARSE_STATE_OUT_OF_ROOT)
-    {
-        return "Out of Root";
-    }
-    if (state == PARSE_STATE_FAIL)
-    {
-        return "Failure";
-    }
-    if (state == PARSE_STATE_OBJECT_AFTER_COLON)
-    {
-        return "Object, After Colon";
-    }
-    if (state == PARSE_STATE_OBJECT_AFTER_COMMA)
-    {
-        return "Object, After Comma";
-    }
-    if (state == PARSE_STATE_OBJECT_AFTER_LEFT_BRACKET)
-    {
-        return "Object, After Left Bracket";
-    }
-    if (state == PARSE_STATE_OBJECT_AFTER_PROPERTY_NAME)
-    {
-        return "Object, After Property Name";
-    }
-    if (state == PARSE_STATE_OBJECT_AFTER_VALUE)
-    {
-        return "Object, After Value";
-    }
-    if (state == PARSE_STATE_LIST_AFTER_COMMA)
-    {
-        return "List, After Comma";
-    }
-    if (state == PARSE_STATE_LIST_AFTER_LEFT_BRACKET)
-    {
-        return "List, After Left Bracket";
-    }
-    if (state == PARSE_STATE_LIST_AFTER_VALUE)
-    {
-        return "List, After Value";
-    }
-    return "Undefined";
+    // clang-format on
 }
 
-bool inc_list_size(JsonList* list)
+// Point `value` to an object `num_properties` properties, pushing a new frame
+// onto the parse stack if necessary (e.g. if the value is an object or a list).
+void set_value_to_object(JsonValue* value,
+    size_t num_properties,
+    JsonCursor* path_stack,
+    size_t* path_stack_size,
+    JsonParserMemoryObject* mem_obj,
+    JsonSettings* settings)
 {
-    size_t num_values = list->num_values;
-    JsonValue* values = list->values;
+    bool computing_mem_reqs = settings->computing_mem_reqs;
 
-    if (num_values == 0)
+    if (!computing_mem_reqs)
     {
-        // Initialize the list
-        values = (JsonValue*)malloc(sizeof(JsonValue));
-    }
-    else
-    {
-        // Resize the list
-        assert(values != NULL);
+        // clang-format off
+        *value = (JsonValue){
+            .type = JSON_OBJECT,
+            .object = (JsonObject){
+                .num_properties = num_properties,
+                .properties     = mem_obj->properties_mem + mem_obj->properties_offset,
+            },
+        };
+        // clang-format on
 
-        values =
-            (JsonValue*)realloc(values, (num_values + 1) * sizeof(JsonValue));
-    }
-
-    if (values == NULL)
-    {
-        return false;
+        mem_obj->properties_offset += num_properties;
     }
 
-    list->num_values += 1;
-    list->values = values;
+    *path_stack_size += 1;
+
+    JsonCursor new_cursor = {
+        .type = JSON_CURSOR_TYPE_OBJECT,
+    };
+
+    if (!computing_mem_reqs)
+    {
+        JsonObject* new_object = &value->object;
+
+        printf("- New object with %d properties\n", new_object->num_properties);
+
+        new_cursor.object = new_object;
+    }
+
+    path_stack[*path_stack_size - 1] = new_cursor;
 }
 
-bool inc_obj_size(JsonObject* object)
+// Point `value` to a list with `num_values` values, pushing a new frame onto
+// the parse stack if necessary (e.g. if the value is an object or a list).
+void set_value_to_list(JsonValue* value,
+    size_t num_values,
+    JsonCursor* path_stack,
+    size_t* path_stack_size,
+    JsonParserMemoryObject* mem_obj,
+    JsonSettings* settings)
 {
-    size_t num_properties    = object->num_properties;
-    JsonProperty* properties = object->properties;
+    bool computing_mem_reqs = settings->computing_mem_reqs;
 
-    if (num_properties == 0)
+    if (!computing_mem_reqs)
     {
-        // Initialize the list
-        properties = (JsonProperty*)malloc(sizeof(JsonProperty));
+        // clang-format off
+        *value = (JsonValue){
+            .type = JSON_LIST,
+            .list = (JsonList){
+                .num_values = num_values,
+                .values = mem_obj->values_mem + mem_obj->values_offset,
+            },
+        };
+        // clang-format on
+
+        mem_obj->values_offset += num_values;
     }
-    else
+
+    *path_stack_size += 1;
+
+    JsonCursor new_cursor = {
+        .type = JSON_CURSOR_TYPE_LIST,
+    };
+
+    if (!computing_mem_reqs)
     {
-        // Resize the list
+        JsonList* new_list = &value->list;
+
+        printf("- New list with %d values\n", new_list->num_values);
+
+        new_cursor.list = new_list;
+    }
+
+    path_stack[*path_stack_size - 1] = new_cursor;
+}
+
+// Assign a value to the last property of the object held by the current cursor,
+// pushing a new frame onto the parse stack if necessary (e.g. if the value is
+// an object or a list).
+JsonState set_value_for_json_property(JsonCursor* cursor,
+    JsonToken token,
+    JsonCursor* path_stack,
+    size_t* path_stack_size,
+    JsonParserMemoryObject* mem_obj,
+    JsonSettings* settings)
+{
+    bool computing_mem_reqs        = settings->computing_mem_reqs;
+
+    JsonObject* current_object     = NULL;
+    JsonProperty* properties       = NULL;
+    size_t num_properties          = 0;
+    JsonProperty* last_property    = NULL;
+    JsonValue* last_property_value = NULL;
+
+    if (!computing_mem_reqs)
+    {
+        current_object = cursor->object;
+
+        assert(current_object != NULL);
+
+        properties     = current_object->properties;
+        num_properties = current_object->num_properties;
+
         assert(properties != NULL);
+        assert(num_properties > 0);
+        assert(cursor->index < num_properties);
 
-        properties = (JsonProperty*)realloc(
-            properties, (num_properties + 1) * sizeof(JsonProperty));
+        last_property = properties + cursor->index;
+
+        assert(last_property != NULL);  // TODO: useless
+
+        last_property_value = &last_property->value;
     }
 
-    if (properties == NULL)
+    if (token.type == JSON_TOKEN_STRING)
     {
-        return false;
-    }
+        if (!computing_mem_reqs)
+        {
+            *last_property_value = (JsonValue){
+                .type   = JSON_STRING,
+                .string = token.string,
+            };
+        }
 
-    object->num_properties += 1;
-    object->properties = properties;
-
-    return true;
-}
-
-JsonState get_after_value_state(JsonCursor* path_stack, size_t path_stack_size)
-{
-    if (path_stack_size == 0)
-    {
-        return PARSE_STATE_OUT_OF_ROOT;
-    }
-
-    JsonCursorType curr_cursor_type = path_stack[path_stack_size - 1].type;
-
-    if (curr_cursor_type == JSON_CURSOR_TYPE_OBJECT)
-    {
         return PARSE_STATE_OBJECT_AFTER_VALUE;
     }
-    else if (curr_cursor_type == JSON_CURSOR_TYPE_LIST)
+    else if (token.type == JSON_TOKEN_NUMBER)
     {
-        return PARSE_STATE_LIST_AFTER_VALUE;
+        if (!computing_mem_reqs)
+        {
+            *last_property_value = (JsonValue){
+                .type   = JSON_NUMBER,
+                .number = token.number,
+
+            };
+        }
+
+        return PARSE_STATE_OBJECT_AFTER_VALUE;
+    }
+    else if (token.type == JSON_TOKEN_LEFT_BRACKET)
+    {
+        set_value_to_object(last_property_value, token.num_properties,
+            path_stack, path_stack_size, mem_obj, settings);
+
+        return PARSE_STATE_OBJECT_AFTER_LEFT_BRACKET;
+    }
+    else if (token.type == JSON_TOKEN_LEFT_SQUACKET)
+    {
+        set_value_to_list(last_property_value, token.num_values, path_stack,
+            path_stack_size, mem_obj, settings);
+
+        return PARSE_STATE_LIST_AFTER_LEFT_BRACKET;
     }
     else
     {
@@ -1249,75 +1508,156 @@ JsonState get_after_value_state(JsonCursor* path_stack, size_t path_stack_size)
     }
 }
 
-JsonObject* new_object() { return (JsonObject*)malloc(sizeof(JsonObject)); }
-JsonList* new_list() { return (JsonList*)malloc(sizeof(JsonList)); }
+// Add a value to the list held by the current cursor, pushing a new frame onto
+// the parse stack if necessary (e.g. if the value is an object or a list).
+JsonState append_value_to_json_list(JsonCursor* cursor,
+    JsonToken token,
+    JsonCursor* path_stack,
+    size_t* path_stack_size,
+    JsonParserMemoryObject* mem_obj,
+    JsonSettings* settings)
+{
+    bool computing_mem_reqs = settings->computing_mem_reqs;
 
-/**
- * @brief Parse a JSON file
- *
- * @param fp pointer to the file
- * @param settings parser settings object
- * @param root_object[out] root of the JSON structure if the root is an
- * object
- * @param root_list[out] root of the JSON structure if the root is a list
- * @param err_msg[out] error message populated on failure
- * @return true on success, false on failure
- */
-bool parse_json(FILE* fp,
-    JsonSettings settings,
-    JsonObject** root_object_ptr,
-    JsonList** root_list_ptr,
+    JsonList* current_list  = NULL;
+    JsonValue* values       = NULL;
+    size_t num_values       = 0;
+    JsonValue* last_value   = NULL;
+
+    if (!computing_mem_reqs)
+    {
+        current_list = cursor->list;
+
+        assert(current_list != NULL);
+
+        values     = current_list->values;
+        num_values = current_list->num_values;
+
+        assert(values != NULL);
+        assert(num_values > 0);
+        assert(cursor->index < num_values);
+
+        last_value = values + cursor->index;
+    }
+
+    if (token.type == JSON_TOKEN_STRING)
+    {
+        if (!computing_mem_reqs)
+        {
+            *last_value = (JsonValue){
+                .type   = JSON_STRING,
+                .string = token.string,
+            };
+        }
+
+        return PARSE_STATE_LIST_AFTER_VALUE;
+    }
+    else if (token.type == JSON_TOKEN_NUMBER)
+    {
+        if (!computing_mem_reqs)
+        {
+            *last_value = (JsonValue){
+                .type   = JSON_NUMBER,
+                .number = token.number,
+            };
+        }
+
+        return PARSE_STATE_LIST_AFTER_VALUE;
+    }
+    else if (token.type == JSON_TOKEN_LEFT_BRACKET)
+    {
+        set_value_to_object(last_value, token.num_properties, path_stack,
+            path_stack_size, mem_obj, settings);
+
+        return PARSE_STATE_OBJECT_AFTER_LEFT_BRACKET;
+    }
+    else if (token.type == JSON_TOKEN_LEFT_SQUACKET)
+    {
+        set_value_to_list(last_value, token.num_values, path_stack,
+            path_stack_size, mem_obj, settings);
+
+        return PARSE_STATE_LIST_AFTER_LEFT_BRACKET;
+    }
+    else
+    {
+        return PARSE_STATE_FAIL;
+    }
+}
+
+// Pop a frame off of the parse stack and return the next state, which is either
+// "after value in list" or "after value in object" depending on the cursor
+// type.
+JsonState step_down_and_get_next_state(
+    JsonCursor* path_stack, size_t* path_stack_size, char** err_msg)
+{
+    assert(*path_stack_size > 0);
+
+    *path_stack_size -= 1;
+
+    if (*path_stack_size == 0)
+    {
+        return PARSE_STATE_OUT_OF_ROOT;
+    }
+
+    JsonCursor* current_cursor = path_stack + *path_stack_size - 1;
+
+    if (current_cursor->type == JSON_CURSOR_TYPE_OBJECT)
+    {
+        return PARSE_STATE_OBJECT_AFTER_VALUE;
+    }
+    else if (current_cursor->type == JSON_CURSOR_TYPE_LIST)
+    {
+        return PARSE_STATE_LIST_AFTER_VALUE;
+    }
+    else
+    {
+        *err_msg = "(parser) internal - unknown cursor type";
+        return PARSE_STATE_FAIL;
+    }
+}
+
+bool parse_json_seq(JsonToken* seq,
+    size_t num_tokens,
+    JsonCursor* path_stack,
+    size_t path_stack_capacity,
+    JsonSettings* settings,
+    JsonParserMemoryObject* mem_obj,
+    JsonValue** root_value_ptr,
     char** err_msg)
 {
-    // LEXER: First pass
-    size_t num_toks = 0;
-    JsonLexState lex_state;
-    if (!json_lex(fp, &num_toks, false, NULL, err_msg, &lex_state))
+    size_t path_stack_size = 0;
+
+    JsonValue* root_value  = NULL;
+
+    if (!settings->computing_mem_reqs)
     {
-        return false;
+        // Point root value to first value in values memory segment
+        root_value      = mem_obj->values_mem + mem_obj->values_offset;
+        *root_value_ptr = root_value;
+
+        mem_obj->values_offset += 1;
     }
-
-    // LEXER: Second pass
-    rewind(fp);
-    JsonToken* seq = NULL;
-    if (!json_lex(fp, &num_toks, true, &seq, err_msg, &lex_state))
+    else
     {
-        return false;
-    }
-
-    if (seq == NULL)
-    {
-        *err_msg = "oom";
-        return NULL;
-    }
-
-    // PARSER: First pass
-    size_t path_stack_size     = 0;
-    size_t path_stack_capacity = lex_state.max_depth;
-    JsonCursor* path_stack =
-        (JsonCursor*)malloc(path_stack_capacity * sizeof(JsonCursor));
-
-    if (path_stack == NULL)
-    {
-        *err_msg = "oom";
-        free(seq);
-        return NULL;
+        mem_obj->num_properties = 0;
+        mem_obj->num_values     = 1;  // For the root
     }
 
     JsonState state = PARSE_STATE_INITIAL_STATE;
 
-    for (size_t i = 0; i < num_toks; i++)
+    for (size_t i = 0; i < num_tokens; i++)
     {
-        printf("State: %s\n", parse_state_to_string(state));
+        JsonToken tok = seq[i];
 
-        /* Unpack */
-        JsonToken tok      = seq[i];
-        JsonTokenType type = tok.type;
-        JsonCursor current_cursor;
+        printf("\t%d: %s | %s\n", i, parse_state_to_string(state),
+            json_tok_type_to_sting(tok));
+
+        JsonTokenType type         = tok.type;
+        JsonCursor* current_cursor = NULL;
 
         if (path_stack_size > 0)
         {
-            current_cursor = path_stack[path_stack_size - 1];
+            current_cursor = &path_stack[path_stack_size - 1];
         }
 
         /* State transition */
@@ -1325,71 +1665,99 @@ bool parse_json(FILE* fp,
         {
             state = PARSE_STATE_FAIL;
 
-            path_stack_size += 1;
-            assert(path_stack_size <= path_stack_capacity);
-
-            // clang-format off
-            if (type == JSON_TOKEN_LEFT_BRACKET)
+            if (type == JSON_TOKEN_STRING)
             {
-                path_stack[path_stack_size - 1] = (JsonCursor) {
-                    .type = JSON_CURSOR_TYPE_OBJECT,
-                    .object = new_object(),
-                };
-                
-                if (path_stack[path_stack_size - 1].object != NULL) 
+                if (!settings->computing_mem_reqs)
                 {
-                    state = PARSE_STATE_OBJECT_AFTER_LEFT_BRACKET;
+                    *root_value = (JsonValue){
+                        .type   = JSON_STRING,
+                        .string = tok.string,
+                    };
                 }
+
+                state = PARSE_STATE_OUT_OF_ROOT;
+            }
+            else if (type == JSON_TOKEN_NUMBER)
+            {
+                if (!settings->computing_mem_reqs)
+                {
+                    *root_value = (JsonValue){
+                        .type   = JSON_NUMBER,
+                        .number = tok.number,
+                    };
+                }
+
+                state = PARSE_STATE_OUT_OF_ROOT;
+            }
+            else if (type == JSON_TOKEN_LEFT_BRACKET)
+            {
+                // ========== New object ==========
+                set_value_to_object(root_value, tok.num_properties, path_stack,
+                    &path_stack_size, mem_obj, settings);
+
+                state = PARSE_STATE_OBJECT_AFTER_LEFT_BRACKET;
             }
             else if (type == JSON_TOKEN_LEFT_SQUACKET)
             {
-                path_stack[path_stack_size - 1] = (JsonCursor) {
-                    .type = JSON_CURSOR_TYPE_LIST,
-                    .list = new_list(),
-                };
-                 
-                if (path_stack[path_stack_size - 1].list != NULL) 
-                {
-                    state = PARSE_STATE_LIST_AFTER_LEFT_BRACKET;
-                }
+                // ========== New list ==========
+                set_value_to_list(root_value, tok.num_values, path_stack,
+                    &path_stack_size, mem_obj, settings);
+
+                state = PARSE_STATE_LIST_AFTER_LEFT_BRACKET;
             }
             else
             {
-                *err_msg = "(lexer) invalid first token. Must be an opening bracket such as '[' or '{'";
+                *err_msg =
+                    "(parser) expected first token to be a value or an opening "
+                    "bracket '[', '{'";
             }
-            // clang-format on
         }
+        /* (Object) After left bracket */
         else if (state == PARSE_STATE_OBJECT_AFTER_LEFT_BRACKET)
         {
             state = PARSE_STATE_FAIL;
 
-            assert(current_cursor.type == JSON_CURSOR_TYPE_OBJECT);
+            assert(current_cursor->type == JSON_CURSOR_TYPE_OBJECT);
 
-            JsonObject* current_object = current_cursor.object;
-
-            if (type == JSON_TOKEN_STRING && inc_obj_size(current_object))
+            if (type == JSON_TOKEN_STRING)
             {
-                JsonProperty* properties = current_object->properties;
-                size_t num_properties    = current_object->num_properties;
+                // ========== New property ==========
+                if (settings->computing_mem_reqs)
+                {
+                    mem_obj->num_properties += 1;
+                }
+                else
+                {
+                    JsonObject* current_object = current_cursor->object;
 
-                assert(properties != NULL);
-                assert(num_properties > 0);
+                    assert(current_object != NULL);
+                    assert(
+                        current_cursor->index < current_object->num_properties);
 
-                JsonProperty last_property = properties[num_properties - 1];
-                last_property.name         = tok.string;
+                    JsonProperty* properties = current_object->properties;
+                    size_t num_properties    = current_object->num_properties;
+
+                    assert(properties != NULL);
+                    assert(current_cursor->index < num_properties);
+
+                    JsonProperty* last_property =
+                        properties + current_cursor->index;
+
+                    last_property->name = tok.string;
+                }
 
                 state = PARSE_STATE_OBJECT_AFTER_PROPERTY_NAME;
             }
-            else if (type == JSON_TOKEN_RBRACKET)
+            else if (type == JSON_TOKEN_RIGHT_BRACKET)
             {
-                path_stack_size -= 1;
-
-                state = get_after_value_state(path_stack, path_stack_size);
+                state = step_down_and_get_next_state(
+                    path_stack, &path_stack_size, err_msg);
             }
             else
             {
-                // TODO: Fix error message
-                *err_msg = "bad syntax";
+                *err_msg =
+                    "(parser) in object - expected property name after left "
+                    "bracket";
             }
         }
         else if (state == PARSE_STATE_OBJECT_AFTER_PROPERTY_NAME)
@@ -1402,118 +1770,68 @@ bool parse_json(FILE* fp,
             }
             else
             {
-                // TODO: Fix error message
-                *err_msg = "bad syntax";
+                *err_msg =
+                    "(parser) in object - expected colon after property name";
             }
         }
         else if (state == PARSE_STATE_OBJECT_AFTER_COLON)
         {
             state = PARSE_STATE_FAIL;
 
-            assert(current_cursor.type == JSON_CURSOR_TYPE_OBJECT);
+            assert(current_cursor->type == JSON_CURSOR_TYPE_OBJECT);
 
-            JsonObject* current_object = current_cursor.object;
-
-            assert(current_object != NULL);
-
-            JsonProperty* properties = current_object->properties;
-            size_t num_properties    = current_object->num_properties;
-
-            assert(properties != NULL);
-            assert(num_properties > 0);
-
-            if (type == JSON_TOKEN_STRING)
+            if (type == JSON_TOKEN_STRING || type == JSON_TOKEN_NUMBER ||
+                type == JSON_TOKEN_LEFT_BRACKET ||
+                type == JSON_TOKEN_LEFT_SQUACKET)
             {
-                properties[num_properties - 1].value = (JsonValue){
-                    .type   = JSON_STRING,
-                    .string = tok.string,
-                };
-
-                // Success
-                state = PARSE_STATE_OBJECT_AFTER_VALUE;
+                state = set_value_for_json_property(current_cursor, tok,
+                    path_stack, &path_stack_size, mem_obj, settings);
             }
-            else if (type == JSON_TOKEN_NUMBER)
-            {
-                properties[num_properties - 1].value = (JsonValue){
-                    .type   = JSON_NUMBER,
-                    .number = tok.number,
-                };
-            }
-            else if (type == JSON_TOKEN_LEFT_BRACKET)
-            // clang-format off
-            {
-                properties[num_properties - 1].value = (JsonValue){
-                    .type = JSON_OBJECT,
-                };
-                
-                JsonObject* new_object = &(properties[num_properties - 1].value.object);
-
-                // Push new cursor onto the path stack, add the new OBJECT
-                // to it, and step into it
-                path_stack_size += 1;
-                JsonCursor new_cursor = {
-                    .type = JSON_CURSOR_TYPE_OBJECT,
-                    .object = new_object,
-                };
-
-                path_stack[path_stack_size - 1] = new_cursor;
-
-                // Success: We're in an OBJECT
-                state = PARSE_STATE_OBJECT_AFTER_LEFT_BRACKET;
-            }
-            else if (type == JSON_TOKEN_LEFT_SQUACKET)
-            {
-                properties[num_properties - 1].value = (JsonValue){
-                    .type = JSON_LIST,
-                };
-                
-                JsonList* new_list = &(properties[num_properties - 1].value.list);
-
-                // Push new cursor onto the path stack, add the new OBJECT
-                // to it, and step into it
-                path_stack_size += 1;
-                JsonCursor new_cursor = {
-                    .type = JSON_CURSOR_TYPE_LIST,
-                    .list = new_list,
-                };
-
-
-                path_stack[path_stack_size - 1] = new_cursor;
-
-                // Success: We're in a LIST
-                state = PARSE_STATE_LIST_AFTER_LEFT_BRACKET;
-            }
-            // clang-format on
             else
             {
-                // TODO: Fix error message
-                *err_msg = "bad syntax";
+                *err_msg = "(parser) in object - expected value after colon";
             }
         }
+        /* (Object) After comma */
         else if (state == PARSE_STATE_OBJECT_AFTER_COMMA)
         {
             state = PARSE_STATE_FAIL;
 
-            assert(current_cursor.type == JSON_CURSOR_TYPE_OBJECT);
+            assert(current_cursor->type == JSON_CURSOR_TYPE_OBJECT);
 
-            JsonObject* current_object = current_cursor.object;
-
-            if (type == JSON_TOKEN_STRING && inc_obj_size(current_object))
+            if (type == JSON_TOKEN_STRING)
             {
-                JsonProperty* properties = current_object->properties;
-                size_t num_properties    = current_object->num_properties;
+                // ========== New property ==========
+                if (settings->computing_mem_reqs)
+                {
+                    mem_obj->num_properties += 1;
+                }
+                else
+                {
+                    JsonObject* current_object = current_cursor->object;
 
-                assert(properties != NULL);
-                assert(num_properties > 0);
+                    assert(current_object != NULL);
+                    assert(
+                        current_cursor->index < current_object->num_properties);
 
-                properties[num_properties - 1].name = tok.string;
+                    JsonProperty* properties = current_object->properties;
+                    size_t num_properties    = current_object->num_properties;
+
+                    assert(properties != NULL);
+                    assert(current_cursor->index < num_properties);
+
+                    JsonProperty* last_property =
+                        properties + current_cursor->index;
+
+                    last_property->name = tok.string;
+                }
 
                 state = PARSE_STATE_OBJECT_AFTER_PROPERTY_NAME;
             }
             else
             {
-                // TODO: Fix error message
-                *err_msg = "bad syntax";
+                *err_msg =
+                    "(parser) in object - expected property name after comma";
             }
         }
         else if (state == PARSE_STATE_OBJECT_AFTER_VALUE)
@@ -1522,192 +1840,80 @@ bool parse_json(FILE* fp,
 
             if (type == JSON_TOKEN_COMMA)
             {
+                // We expect another property
+                if (!settings->computing_mem_reqs)
+                {
+                    current_cursor->index += 1;
+                }
+
                 state = PARSE_STATE_OBJECT_AFTER_COMMA;
             }
-            else if (type == JSON_TOKEN_RBRACKET)
+            else if (type == JSON_TOKEN_RIGHT_BRACKET)
             {
-                path_stack_size -= 1;
-
-                state = get_after_value_state(path_stack, path_stack_size);
+                state = step_down_and_get_next_state(
+                    path_stack, &path_stack_size, err_msg);
             }
             else
             {
-                // TODO: Fix error message
-                *err_msg = "bad syntax";
+                *err_msg =
+                    "(parser) in object - expected comma or right bracket "
+                    "after value";
+                printf("Bad token type: %s\n", json_tok_type_to_sting(tok));
             }
         }
+        /* (List) After comma */
         else if (state == PARSE_STATE_LIST_AFTER_COMMA)
         {
             state = PARSE_STATE_FAIL;
 
-            assert(current_cursor.type == JSON_CURSOR_TYPE_LIST);
+            assert(current_cursor->type == JSON_CURSOR_TYPE_LIST);
 
-            JsonList* current_list = current_cursor.list;
-
-            assert(current_list != NULL);
-
-            JsonValue* values = current_list->values;
-            size_t num_values = current_list->num_values;
-
-            assert(values != NULL);
-            assert(num_values > 0);
-
-            // clang-format off
-            if (type == JSON_TOKEN_STRING && inc_list_size(&current_list))
+            if (type == JSON_TOKEN_STRING || type == JSON_TOKEN_NUMBER ||
+                type == JSON_TOKEN_LEFT_BRACKET ||
+                type == JSON_TOKEN_LEFT_SQUACKET)
             {
-                values[num_values - 1] = (JsonValue){
-                    .type   = JSON_STRING,
-                    .string = tok.string,
-                };
+                // ========== New list value ==========
+                if (settings->computing_mem_reqs)
+                {
+                    mem_obj->num_values += 1;
+                }
 
-                // Success
-                state = PARSE_STATE_LIST_AFTER_VALUE;
-            }
-            else if (type == JSON_TOKEN_NUMBER && inc_list_size(&current_list))
-            {
-                values[num_values - 1] = (JsonValue){
-                    .type   = JSON_NUMBER,
-                    .number = tok.number,
-                };
-
-                // Success
-                state = PARSE_STATE_LIST_AFTER_VALUE;
-            }
-            else if (type == JSON_TOKEN_LEFT_BRACKET && inc_list_size(&current_list))
-            {
-                values[num_values - 1] = (JsonValue){
-                    .type = JSON_OBJECT,
-                };
-
-                // Push new cursor onto the path stack, add the new object
-                // to it, and step into it
-                path_stack_size += 1;
-                JsonCursor new_cursor = {
-                    .type   = JSON_CURSOR_TYPE_OBJECT,
-                    .object = &(values[num_values - 1].object),
-                };
-                path_stack[path_stack_size - 1] = new_cursor;
-
-                // Success: We're in an object
-                state = PARSE_STATE_OBJECT_AFTER_LEFT_BRACKET;
-
-            }
-            else if (type == JSON_TOKEN_LEFT_SQUACKET && inc_list_size(&current_list)) {
-                values[num_values - 1] = (JsonValue){
-                    .type = JSON_LIST,
-                };
-
-                // Push new cursor onto the path stack, add the new LIST
-                // to it, and step into it
-                path_stack_size += 1;
-                JsonCursor new_cursor = {
-                    .type = JSON_CURSOR_TYPE_LIST,
-                    .list = &(values[num_values - 1].object),
-                };
-                path_stack[path_stack_size - 1] = new_cursor;
-
-                // Success: We're in a list
-                state = PARSE_STATE_LIST_AFTER_LEFT_BRACKET;
+                state = append_value_to_json_list(current_cursor, tok,
+                    path_stack, &path_stack_size, mem_obj, settings);
             }
             else
             {
-                // TODO: Fix error message
-                *err_msg = "bad syntax";
+                *err_msg = "(parser) in list - expected value after comma";
             }
-            // clang-format on
         }
         else if (state == PARSE_STATE_LIST_AFTER_LEFT_BRACKET)
         {
             state = PARSE_STATE_FAIL;
 
-            assert(current_cursor.type == JSON_CURSOR_TYPE_LIST);
+            assert(current_cursor->type == JSON_CURSOR_TYPE_LIST);
 
-            JsonList* current_list = current_cursor.list;
-
-            assert(current_list != NULL);
-
-            JsonValue* values = current_list->values;
-            size_t num_values = current_list->num_values;
-
-            assert(values != NULL);
-            assert(num_values > 0);
-
-            if (type == JSON_TOKEN_STRING)
+            if (type == JSON_TOKEN_STRING || type == JSON_TOKEN_NUMBER ||
+                type == JSON_TOKEN_LEFT_BRACKET ||
+                type == JSON_TOKEN_LEFT_SQUACKET)
             {
-                if (inc_list_size(&current_list))
+                // ========== New list value ==========
+                if (settings->computing_mem_reqs)
                 {
-                    values[num_values - 1] = (JsonValue){
-                        .type   = JSON_STRING,
-                        .string = tok.string,
-                    };
-
-                    // Success
-                    state = PARSE_STATE_LIST_AFTER_VALUE;
+                    mem_obj->num_values += 1;
                 }
-            }
-            else if (type == JSON_TOKEN_NUMBER)
-            {
-                if (inc_list_size(&current_list))
-                {
-                    values[num_values - 1] = (JsonValue){
-                        .type   = JSON_NUMBER,
-                        .number = tok.number,
-                    };
 
-                    // Success
-                    state = PARSE_STATE_LIST_AFTER_VALUE;
-                }
-            }
-            else if (type == JSON_TOKEN_LEFT_BRACKET)
-            {
-                if (inc_list_size(&current_list))
-                {
-                    values[num_values - 1] = (JsonValue){
-                        .type = JSON_OBJECT,
-                    };
-
-                    // Push new cursor onto the path stack, add the new object
-                    // to it, and step into it
-                    path_stack_size += 1;
-                    path_stack[path_stack_size - 1] = (JsonCursor){
-                        .type   = JSON_CURSOR_TYPE_OBJECT,
-                        .object = &(values[num_values - 1].object),
-                    };
-
-                    // Success: We're in an object
-                    state = PARSE_STATE_OBJECT_AFTER_LEFT_BRACKET;
-                }
-            }
-            else if (type == JSON_TOKEN_LEFT_SQUACKET)
-            {
-                if (inc_list_size(&current_list))
-                {
-                    values[num_values - 1] = (JsonValue){
-                        .type = JSON_LIST,
-                    };
-
-                    // Push new cursor onto the path stack, add the new LIST
-                    // to it, and step into it
-                    path_stack_size += 1;
-                    path_stack[path_stack_size - 1] = (JsonCursor){
-                        .type = JSON_CURSOR_TYPE_LIST,
-                        .list = &(values[num_values - 1].object),
-                    };
-
-                    // Success: We're in a list
-                    state = PARSE_STATE_LIST_AFTER_LEFT_BRACKET;
-                }
+                state = append_value_to_json_list(current_cursor, tok,
+                    path_stack, &path_stack_size, mem_obj, settings);
             }
             else if (type == JSON_TOKEN_RIGHT_SQUACKET)
             {
-                path_stack_size -= 1;
-
-                state = get_after_value_state(path_stack, path_stack_size);
+                state = step_down_and_get_next_state(
+                    path_stack, &path_stack_size, err_msg);
             }
             else
             {
-                // TODO: Fix error message
-                *err_msg = "bad syntax";
+                *err_msg =
+                    "(parser) in list - expected value after left squacket";
             }
         }
         else if (state == PARSE_STATE_LIST_AFTER_VALUE)
@@ -1716,21 +1922,30 @@ bool parse_json(FILE* fp,
 
             if (type == JSON_TOKEN_COMMA)
             {
+                // We expect another value
+                if (!settings->computing_mem_reqs)
+                {
+                    current_cursor->index += 1;
+                }
+
                 state = PARSE_STATE_LIST_AFTER_COMMA;
             }
             else if (type == JSON_TOKEN_RIGHT_SQUACKET)
             {
-                path_stack_size -= 1;
-
-                state = get_after_value_state(path_stack, path_stack_size);
+                state = step_down_and_get_next_state(
+                    path_stack, &path_stack_size, err_msg);
             }
             else if (PARSE_STATE_OUT_OF_ROOT)
             {
-                *err_msg = "out of root too early";
+                *err_msg =
+                    "(parser) in list - out of tokens before stepping out of "
+                    "root object";
             }
             else
             {
-                *err_msg = "(internal) unknown parse state - where am I?";
+                *err_msg =
+                    "(parser) in list - expected comma or right squacket after "
+                    "value";
             }
         }
         else if (state == PARSE_STATE_FAIL)
@@ -1742,8 +1957,8 @@ bool parse_json(FILE* fp,
         }
         else
         {
-            // TODO: Fix error message
-            *err_msg = "(internal) unknown state";
+            *err_msg = "(parser) lost - unknown parse state";
+
             state    = PARSE_STATE_FAIL;
         }
     }
@@ -1752,7 +1967,8 @@ bool parse_json(FILE* fp,
     if (state != PARSE_STATE_OUT_OF_ROOT)
     {
         // TODO: Amend this error message
-        *err_msg = "finished parsing before root object closed";
+        *err_msg =
+            "(parser) internal - finished parsing before root object closed";
 
         // TODO: Clean up memory
         return false;
@@ -1760,5 +1976,128 @@ bool parse_json(FILE* fp,
 
     // TODO: Clean up memory
     // TODO: Set root object/list
+    return true;
+}
+
+/**
+ * @brief Parse a JSON file
+ *
+ * @param fp pointer to the file
+ * @param settings parser settings object
+ * @param root_object[out] root of the JSON structure if the root is an
+ * object
+ * @param root_list[out] root of the JSON structure if the root is a list
+ * @param err_msg[out] error message populated on failure
+ * @return true on success, false on failure
+ */
+bool parse_json(
+    FILE* fp, JsonSettings settings, JsonValue** root_value_ptr, char** err_msg)
+{
+    JsonParserMemoryObject mem_obj;
+
+    JsonLexerSettings lexer_settings = {
+        .make_seq = false,
+    };
+
+    JsonLexerInfo lexer_info = {
+        .settings = lexer_settings,
+        .mem_obj  = &mem_obj,
+    };
+
+    // LEXER: First pass
+
+    if (!json_lex(fp, &lexer_info, err_msg))
+    {
+        return false;
+    }
+
+    // Allocate memory for everything all at once
+    size_t properties_bytes = mem_obj.num_properties * sizeof(JsonProperty);
+    size_t values_bytes     = mem_obj.num_values * sizeof(JsonValue);
+    size_t tokens_bytes     = mem_obj.num_tokens * sizeof(JsonToken);
+    size_t path_stack_bytes = lexer_info.max_depth * sizeof(JsonCursor);
+
+    size_t json_parse_mem_budget =
+        properties_bytes + values_bytes + tokens_bytes + path_stack_bytes;
+
+    uint8_t* mem = (uint8_t*)malloc(json_parse_mem_budget * sizeof(uint8_t));
+
+    mem_obj.properties_mem = (JsonProperty*)mem;
+    mem_obj.values_mem     = (JsonValue*)(mem + properties_bytes);
+    mem_obj.tokens_mem = (JsonToken*)(mem + properties_bytes + values_bytes);
+    mem_obj.path_stack_mem =
+        (JsonCursor*)(mem + properties_bytes + values_bytes + tokens_bytes);
+
+    //* Print memory reqs for debugging purposes */
+    printf("========== Computed memory requirements ==========\n");
+    printf("\tProperties:  %4u, memory: %4u\n", mem_obj.num_properties,
+        mem_obj.num_properties * sizeof(JsonProperty));
+    printf("\tList values: %4d, memory: %4d\n", mem_obj.num_values,
+        mem_obj.num_values * sizeof(JsonValue));
+    //* Print memory reqs for debugging purposes */
+
+    // LEXER: Second pass
+
+    lexer_info.settings.make_seq = true;
+
+    rewind(fp);
+
+    if (!json_lex(fp, &lexer_info, err_msg))
+    {
+        return false;
+    }
+
+    // Unpack lexer info
+    JsonToken* seq = lexer_info.mem_obj->tokens_mem;
+
+    if (seq == NULL)
+    {
+        *err_msg = "(parser) oom - couldn't allocate memory for token sequence";
+        return false;
+    }
+
+    // DEBUG
+    printf("========== Token sequence ==========\n");
+    for (size_t i = 0; i < mem_obj.num_tokens; i++)
+    {
+        printf("\t%d: %s\n", i, json_tok_to_sting(seq[i]));
+    }
+
+    // PARSER: First pass
+    // - Compute the memory we'll need for the output object
+
+    settings.computing_mem_reqs = true;
+
+    printf("========== First parser pass: Compute memory reqs ==========\n");
+    if (!parse_json_seq(seq, mem_obj.num_tokens, mem_obj.path_stack_mem,
+            mem_obj.path_stack_capacity, &settings, &mem_obj, root_value_ptr,
+            err_msg))
+    {
+        return false;
+    }
+
+    //* Print memory reqs for debugging purposes */
+    printf("========== Computed memory requirements ==========\n");
+    printf("\tProperties:  %4u, memory: %4u\n", mem_obj.num_properties,
+        mem_obj.num_properties * sizeof(JsonProperty));
+    printf("\tList values: %4d, memory: %4d\n", mem_obj.num_values,
+        mem_obj.num_values * sizeof(JsonValue));
+    //* Print memory reqs for debugging purposes */
+
+    // PARSER: Second pass
+    // - Now we're ready to construct the output object
+
+    settings.computing_mem_reqs = false;
+
+    printf("========== Final parser pass: Build object ==========\n");
+    if (!parse_json_seq(seq, mem_obj.num_tokens, mem_obj.path_stack_mem,
+            mem_obj.path_stack_capacity, &settings, &mem_obj, root_value_ptr,
+            err_msg))
+    {
+        return false;
+    }
+
+    // TODO: Clean up any memory we used that isn't part of the output object
+
     return true;
 }

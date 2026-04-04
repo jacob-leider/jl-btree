@@ -5,6 +5,8 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "./core/btree.h"
+
 typedef struct BTreeNode BTreeNode;
 
 typedef struct LexerSettings
@@ -21,20 +23,16 @@ typedef struct DeserializationSettings
     // If validation returns false for ANY reason (including OOM), exit with an
     // error.
     bool fail_when_validation_cant_happen;
-    LexerSettings lexer_settings;
+    LexerSettings* lexer_settings;
 } DeserializationSettings;
 
 // Tree deserializers
 
-int TreeFromArr(int* vals, int num_vals, int node_size, BTreeNode** root_ptr);
-
-int TreeFromStr(const char* str,
-    int len,
-    DeserializationSettings* settings,
-    BTreeNode** root_ptr);
+int TreeFromStr(
+    const char* str, int len, DeserializationSettings* settings, BTree* tree);
 
 // Tree serializers
 
-char* StrFromTree(BTreeNode* root);
+char* StrFromTree(BTree* tree);
 
 #endif

@@ -2,18 +2,17 @@
 
 #include <assert.h>
 #include <stdbool.h>
-#include <stdlib.h>
-#include <string.h>
+#include <stdio.h>
 
-#include "./btree.h"
 #include "./btree_node.h"
 #include "./btree_settings.h"
+#include "./contains.h"
+#include "./mem.h"
 #include "./search.h"
-#include "./stack.h"
 
 // Child index will depend on which half of `ptr` the next ancestor belongs to
 static size_t child_idx_after_split(
-    const BTreeNode* ptr, const BTreeKey key, const size_t child_idx)
+    BTreeNode* ptr, const BTreeKey key, const size_t child_idx)
 {
     const size_t mid = btree_node_node_size(ptr) / 2;
     if (btree_node_is_full(ptr) && key > btree_node_get_key(ptr, mid))
@@ -93,7 +92,7 @@ static size_t compute_child_idx(BTreeNode* node, BTreeKey key, bool* found_key)
  * @param[out] last_nonfull_anc_ptr pointer to the last non-full ancestor of
  * `leaf` (including `leaf`) consecutive ancestors starting at `leaf` (including
  * `leaf`) that are full
- * @param[out] child_idx_cache path from last_nonfull_anc (or new root if all
+ * @param[out] child_hint_cache path from last_nonfull_anc (or new root if all
  * ancestors are full) to the leaf where `key` will be inserted.
  *
  * @return a return code
@@ -101,23 +100,30 @@ static size_t compute_child_idx(BTreeNode* node, BTreeKey key, bool* found_key)
  *    - 1: (success) Didn't find `key`: `node_ptr` points to the leaf where
  *    `key` should be inserted
  */
-bool btree_node_find_closest_nonfull_anc(const BTreeNode* root,
+bool btree_node_find_closest_nonfull_anc(BTreeNode* root,
     const BTreeKey key,
     BTreeNode** last_nonfull_anc_ptr,
-    Stack* child_hint_cache_stack)
+    size_t* child_hint_cache)
 {
+    size_t child_hint_cache_index = 0;
+
     // Depth in the subtree rooted at last_nonfull_anc. Assume a depth of 1
     // in case all ancestors are full. Otherwise, depth will be reset to
     // zero.
     // Always starts at zero because a new root is never split
     size_t child_idx = 0;
-    if (!stack_push(child_hint_cache_stack, &child_idx))
-    {
-        return 0;
-    }
 
-    // We expect the caller to ensure the tree doesn't contain this key, but may
-    // handle this case better in the future
+    if (child_hint_cache_index + 1 == DEFAULT_CHILD_IDX_CACHE_SIZE)
+    {
+        // TODO: This size should also be a local parameter in case we want to
+        // override it
+        return false;  // OOM
+    }
+    child_hint_cache[child_hint_cache_index] = child_idx;
+    child_hint_cache_index += 1;
+
+    // We expect the caller to ensure the tree doesn't contain this key, but
+    // may handle this case better in the future
     bool found_key              = 0;
     BTreeNode* ptr              = root;
     BTreeNode* last_nonfull_anc = NULL;
@@ -130,7 +136,9 @@ bool btree_node_find_closest_nonfull_anc(const BTreeNode* root,
         {
             update_subtree_sizes_upwards(ptr, last_nonfull_anc, +1);
             last_nonfull_anc = ptr;
-            stack_clear(child_hint_cache_stack);
+
+            // Clear the stack
+            child_hint_cache_index = 0;
         }
 
         // Find the next ancestor
@@ -145,11 +153,14 @@ bool btree_node_find_closest_nonfull_anc(const BTreeNode* root,
             return 0;
         }
 
-        if (!stack_push(child_hint_cache_stack, &child_idx_after_split_var))
+        if (child_hint_cache_index + 1 == DEFAULT_CHILD_IDX_CACHE_SIZE)
         {
-            // OOM
-            return 0;
+            return false;  // OOM
         }
+        // TODO: This size should also be a local parameter in case we want
+        // to override it
+        child_hint_cache[child_hint_cache_index] = child_idx_after_split_var;
+        child_hint_cache_index += 1;
 
         btree_node_intl_descend(&ptr, child_idx);
     }
@@ -158,7 +169,9 @@ bool btree_node_find_closest_nonfull_anc(const BTreeNode* root,
     {
         update_subtree_sizes_upwards(ptr, last_nonfull_anc, +1);
         last_nonfull_anc = ptr;
-        stack_clear(child_hint_cache_stack);
+
+        // Clear the stack
+        child_hint_cache_index = 0;
     }
 
     // Find the next ancestor
@@ -173,11 +186,15 @@ bool btree_node_find_closest_nonfull_anc(const BTreeNode* root,
         return 0;
     }
 
-    if (!stack_push(child_hint_cache_stack, &child_idx_after_split_var))
+    // Your b-tree is COLOSSAL.
+    if (child_hint_cache_index + 1 == DEFAULT_CHILD_IDX_CACHE_SIZE)
     {
-        // OOM
-        return 0;
+        return false;
     }
+
+    // Push child index onto cache stack
+    child_hint_cache[child_hint_cache_index] = child_idx_after_split_var;
+    child_hint_cache_index += 1;
 
 #if REDUNDANT < 1
     // TODO: find_idx... is broken
@@ -212,8 +229,7 @@ bool btree_node_find_closest_nonfull_anc(const BTreeNode* root,
  *    - 0: Error (OOM)
  *    - 1: OK
  */
-bool btree_node_split(
-    BTreeNode* node, const BTreeNode** rsib_ptr, int* next_key_ptr)
+bool btree_node_split(BTreeNode* node, BTreeNode** rsib_ptr, int* next_key_ptr)
 {
     const size_t size = btree_node_node_size(node);
     // size of left sibling after the split
@@ -223,7 +239,6 @@ bool btree_node_split(
     BTreeNode* rsib;
     if (!btree_node_init(size, &rsib, !btree_node_is_leaf(node)))
     {
-        // OOM
         return 0;
     }
     *rsib_ptr = rsib;
@@ -318,7 +333,7 @@ bool btree_node_split(
  *    - 2: `val` already exists in the subtree with root `root`
  */
 int btree_node_insert_impl(
-    BTreeNode* root, const BTreeKey key, const BTreeNode** new_root_ptr)
+    BTreeNode* root, const BTreeKey key, BTreeNode** new_root_ptr)
 {
     // By default, the root of the tree doesn't change
     *new_root_ptr = root;
@@ -329,25 +344,13 @@ int btree_node_insert_impl(
         return 2;
     }
 
-    Stack* child_idx_cache_stack =
-        stack_init(sizeof(size_t), DEFAULT_CHILD_IDX_CACHE_SIZE);
-    if (child_idx_cache_stack == NULL)
+    size_t* child_hint_cache = CHILD_HINT_CACHE_MEM;
+    BTreeNode* a             = NULL;
+
+    if (!btree_node_find_closest_nonfull_anc(root, key, &a, child_hint_cache))
     {
-        // TODO: Simply don't cache the children if this fails. Don't error out.
         return 0;
     }
-
-    BTreeNode* a = NULL;
-
-    if (!btree_node_find_closest_nonfull_anc(
-            root, key, &a, child_idx_cache_stack))
-    {
-        stack_kill(child_idx_cache_stack);
-
-        return 0;
-    }
-
-    size_t* child_hint_cache = child_idx_cache_stack->data;
 
     // Create a new root if all ancestors of the leaf we're inserting `key` into
     // are full
@@ -355,8 +358,6 @@ int btree_node_insert_impl(
     {
         if (!btree_node_init(btree_node_node_size(root), &a, 1))
         {
-            stack_kill(child_idx_cache_stack);
-
             return 0;
         }
 
@@ -369,8 +370,7 @@ int btree_node_insert_impl(
 
     // Insertion proceeds top-down from the first non-full ancestor of the leaf
     // where `key` will be inserted.
-    size_t depth     = 0;
-    size_t child_idx = 0;
+    size_t depth = 0;
     while (!btree_node_is_leaf(a))
     {
         // Get child B of A whose range contains `key`, and split B into B1, B2,
@@ -381,8 +381,6 @@ int btree_node_insert_impl(
 
         if (!btree_node_split(b1, &b2, &k))
         {
-            stack_kill(child_idx_cache_stack);
-
             return 0;
         }
 

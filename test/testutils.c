@@ -8,14 +8,14 @@
 #include <sys/ioctl.h>
 #include <unistd.h>
 
-#include "../src/btree_print.h"
-#include "../src/stack.h"
-#include "./btree.h"
-#include "./btree_node.h"
-#include "./printutils.h"
+#include "../src/core/btree.h"
+#include "../src/core/btree_node.h"
+#include "../src/utils/btree_print.h"
+#include "../src/utils/printutils.h"
+#include "../src/utils/stack.h"
 // PRINTING
 
-void testutils_init() { srand(10); }
+void testutils_init(void) { srand(10); }
 
 // @brief Check if this peculiar bit of memory is a btree node
 //
@@ -53,7 +53,7 @@ int btree_node_is_valid_partial(BTreeNode* node, char** err_msg)
         return 0;
     }
 
-    for (int i = 1; i < btree_node_curr_size(node); i++)
+    for (size_t i = 1; i < btree_node_curr_size(node); i++)
     {
         if (btree_node_get_key(node, i) < btree_node_get_key(node, i - 1))
         {
@@ -68,7 +68,7 @@ int btree_node_is_valid_partial(BTreeNode* node, char** err_msg)
 typedef struct SubtreeSizeTest
 {
     int passed;
-    int computed_subtree_size;
+    size_t computed_subtree_size;
 } SubtreeSizeTest;
 
 SubtreeSizeTest btree_check_subtree_sizes_impl(BTreeNode* root)
@@ -81,8 +81,8 @@ SubtreeSizeTest btree_check_subtree_sizes_impl(BTreeNode* root)
         return t;
     }
 
-    int computed_subtree_size = btree_node_curr_size(root);
-    for (int i = 0; i <= btree_node_curr_size(root); i++)
+    size_t computed_subtree_size = btree_node_curr_size(root);
+    for (size_t i = 0; i <= btree_node_curr_size(root); i++)
     {
         SubtreeSizeTest t =
             btree_check_subtree_sizes_impl(btree_node_get_child(root, i));
@@ -90,7 +90,7 @@ SubtreeSizeTest btree_check_subtree_sizes_impl(BTreeNode* root)
         {
             // fail (remove this later on)
             BTreeNode* child = btree_node_get_child(root, i);
-            printf("(child %d) Expected: %d, Computed: %d\n", i + 1,
+            printf("(child %lu) Expected: %lu, Computed: %lu\n", i + 1,
                 btree_node_subtree_size(child), t.computed_subtree_size);
             printf("Child: ");
             printArr(child->keys, btree_node_curr_size(child));
@@ -117,7 +117,7 @@ int btree_size(BTreeNode* root)
     if (!root) return 0;
 
     int size = 0;
-    for (int idx = 0; idx <= btree_node_curr_size(root); idx++)
+    for (size_t idx = 0; idx <= btree_node_curr_size(root); idx++)
     {
         size += btree_size(btree_node_get_child(root, idx));
     }
@@ -174,7 +174,7 @@ static void print_path_from_stack_verbose(BTreeCmpState* state)
             state->outp_fp, btree_node_keys(ptr), btree_node_num_keys(ptr));
         fprintf(state->outp_fp, ")");
 
-        fprintf(state->outp_fp, "    idx = %d", temp);
+        fprintf(state->outp_fp, "    idx = %lu", temp);
 
         num_spaces += 4;
     }
@@ -193,12 +193,13 @@ void print_path_from_stack(BTreeCmpState* state)
     for (size_t depth = 0; depth < stack_size(state->path_stack); depth++)
     {
         stack_get_element(state->path_stack, depth, &temp);
-        fprintf(state->outp_fp, " -> %d", temp);
+        fprintf(state->outp_fp, " -> %lu", temp);
     }
 
     fprintf(state->outp_fp, "\n");
 }
 
+/*
 static void print_horizontal_line(FILE* fp)
 {
     struct winsize w;
@@ -211,6 +212,7 @@ static void print_horizontal_line(FILE* fp)
     for (unsigned short i = 0; i < cols; i++) fprintf(fp, "-");
     fprintf(fp, "\n");
 }
+*/
 
 void btree_cmp_print_fail_start(BTreeCmpState* state)
 {
@@ -218,7 +220,11 @@ void btree_cmp_print_fail_start(BTreeCmpState* state)
     print_path_from_stack_verbose(state);
 }
 
-void btree_cmp_print_fail_end(BTreeCmpState* state) {}
+//
+void btree_cmp_print_fail_end(void)
+{
+    // TODO
+}
 
 static bool btree_cmp_r_null_check(BTreeCmpState* state)
 {
@@ -236,7 +242,7 @@ static bool btree_cmp_r_null_check(BTreeCmpState* state)
         fprintf(state->outp_fp, "(%s): is not null:\n",
             state->a == NULL ? state->b_name : state->a_name);
 
-        btree_cmp_print_fail_end(state);
+        btree_cmp_print_fail_end();
 
         return false;
     }
@@ -244,10 +250,12 @@ static bool btree_cmp_r_null_check(BTreeCmpState* state)
     return true;
 }
 
+#ifndef BTREE_NODE_NODE_SIZE
 static bool btree_cmp_r_size_check(BTreeCmpState* state)
 {
     return btree_node_node_size(state->a) == btree_node_node_size(state->b);
 }
+#endif
 
 static bool btree_cmp_r_leaf_check(BTreeCmpState* state)
 {
@@ -259,7 +267,7 @@ static bool btree_cmp_r_leaf_check(BTreeCmpState* state)
             btree_node_is_leaf(state->a) ? state->a_name : state->b_name,
             btree_node_is_leaf(state->a) ? state->b_name : state->a_name);
 
-        btree_cmp_print_fail_end(state);
+        btree_cmp_print_fail_end();
 
         return false;
     }
@@ -273,12 +281,12 @@ static bool btree_cmp_r_num_keys_check(BTreeCmpState* state)
     {
         btree_cmp_print_fail_start(state);
 
-        fprintf(state->outp_fp, "(%s) has size %d:\n\t", state->a_name,
+        fprintf(state->outp_fp, "(%s) has size %lu:\n\t", state->a_name,
             btree_node_num_keys(state->a));
-        fprintf(state->outp_fp, "(%s) has size %d:\n\t", state->b_name,
+        fprintf(state->outp_fp, "(%s) has size %lu:\n\t", state->b_name,
             btree_node_num_keys(state->b));
 
-        btree_cmp_print_fail_end(state);
+        btree_cmp_print_fail_end();
 
         return false;
     }
@@ -292,16 +300,16 @@ static bool btree_cmp_r_num_children_check(BTreeCmpState* state)
     {
         btree_cmp_print_fail_start(state);
 
-        fprintf(state->outp_fp, "(%s) has %d children:\n\t", state->a_name,
+        fprintf(state->outp_fp, "(%s) has %lu children:\n\t", state->a_name,
             btree_node_num_children(state->a));
         fprintArr(state->outp_fp, btree_node_keys(state->a),
             btree_node_num_keys(state->a));
-        fprintf(state->outp_fp, "(%s) has %d children:\n\t", state->b_name,
+        fprintf(state->outp_fp, "(%s) has %lu children:\n\t", state->b_name,
             btree_node_num_children(state->b));
         fprintArr(state->outp_fp, btree_node_keys(state->b),
             btree_node_num_keys(state->b));
 
-        btree_cmp_print_fail_end(state);
+        btree_cmp_print_fail_end();
 
         return false;
     }
@@ -322,12 +330,12 @@ static bool btree_cmp_r_subtree_size_check(BTreeCmpState* state)
         fprintf(state->outp_fp, "\n");
         fprintf(state->outp_fp, "Details\n\n");
 
-        fprintf(state->outp_fp, "  - Subtree size of (%s) is %d\n",
+        fprintf(state->outp_fp, "  - Subtree size of (%s) is %lu\n",
             state->a_name, btree_node_subtree_size(state->a));
-        fprintf(state->outp_fp, "  - Subtree size of (%s) is %d\n",
+        fprintf(state->outp_fp, "  - Subtree size of (%s) is %lu\n",
             state->b_name, btree_node_subtree_size(state->b));
 
-        btree_cmp_print_fail_end(state);
+        btree_cmp_print_fail_end();
 
         return false;
     }
@@ -337,10 +345,8 @@ static bool btree_cmp_r_subtree_size_check(BTreeCmpState* state)
 
 static bool btree_cmp_r(BTreeCmpState* state)
 {
-    BTreeNode* a       = state->a;
-    BTreeNode* b       = state->b;
-    const char* a_name = state->a_name;
-    const char* b_name = state->b_name;
+    BTreeNode* a = state->a;
+    BTreeNode* b = state->b;
 
     assert(a != NULL);
     assert(b != NULL);
@@ -350,10 +356,12 @@ static bool btree_cmp_r(BTreeCmpState* state)
         return false;
     }
 
+#ifndef BTREE_NODE_NODE_SIZE
     if (!btree_cmp_r_size_check(state))
     {
         return false;
     }
+#endif
 
     if (!btree_cmp_r_leaf_check(state))
     {
@@ -436,19 +444,20 @@ bool btree_cmp(BTreeCmpSettings* settings)
         settings->b_name = "b";
     }
 
-    // TODO: Better default files (location, name, etc.)
-    const char* default_log_file_path = "./err_log.txt";
-
     if (settings->log_file_path == NULL)
     {
-        settings->log_file_path = default_log_file_path;
+#ifdef DEFAULT_ERROR_LOG_PATH
+        settings->log_file_path = DEFAULT_ERROR_LOG_PATH;
+#else
+        return 0;
+#endif
     }
 
     FILE* fp = fopen(settings->log_file_path, "w");
 
     if (fp == 0)
     {
-        fp = fopen(default_log_file_path, "w");
+        fp = fopen(settings->log_file_path, "w");
     }
 
     BTreeCmpState state = {.a = settings->a_root,

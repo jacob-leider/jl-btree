@@ -1,3 +1,8 @@
+// General array printing utilities
+//
+// @author Jacob Leider
+// Last revised: 03/26
+
 #include "./printutils.h"
 
 #include <stdio.h>

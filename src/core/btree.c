@@ -1,14 +1,8 @@
 #include "./btree.h"
 
 #include <limits.h>
-#include <stdbool.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
 
 #include "./btree_node.h"
-#include "./btree_settings.h"
-#include "./search.h"
 
 /// Formal-ish Definition of a BTree
 ///
@@ -59,28 +53,6 @@
 /// 4. If it's just for a btree node, AND that node is a internal, prefix with
 ///    btree_node_intl_...
 
-bool try_grow_cache(void** data_ptr, int* size, size_t elem_size)
-{
-    // If you hit this, then you REALLY screwed up
-    if (*size > INT_MAX / 2)
-    {
-        return false;
-    }
-
-    int new_size       = (*size) * 2;
-    void* new_data_ptr = realloc(*data_ptr, new_size * elem_size);
-
-    if (!new_data_ptr)
-    {
-        return false;
-    }
-
-    *data_ptr = new_data_ptr;
-    *size     = new_size;
-
-    return true;
-}
-
 ////////////////////////////////////////////////////////////////////////////////
 // GENERAL                                                                    //
 ////////////////////////////////////////////////////////////////////////////////
@@ -93,71 +65,31 @@ bool try_grow_cache(void** data_ptr, int* size, size_t elem_size)
  *
  * @param node
  */
-void btree_subtree_kill(BTreeNode* node)
+static void btree_subtree_kill(BTreeNode* node)
 {
     if (node == NULL) return;
 
     if (node->children)
     {
-        for (int i = 0; i <= btree_node_curr_size(node); i++)
+        for (size_t i = 0; i <= btree_node_curr_size(node); i++)
             btree_subtree_kill(btree_node_get_child(node, i));
     }
 
     btree_node_kill(node);
 }
 
+void btree_kill(BTree* tree) { btree_subtree_kill(tree->root); }
+
 ////////////////////////////////////////////////////////////////////////////////
 // INSERTION                                                                  //
 ////////////////////////////////////////////////////////////////////////////////
 
-/** @brief Determine whether a descendent of `root` contains the key `key`
- *
- *  @param[in] root the root of a btree
- *  @param[in] key the key we're searching for
- *
- *  @return a return code
- *     - 0: tree doesn't contain `key`
- *     - 1: tree contains `key`
- */
-int btree_node_contains_key(BTreeNode* root, int key)
+int btree_insert(BTree* tree, BTreeKey key)
 {
-    BTreeNode* ptr = root;
-    int child_idx  = 0;
-
-    // Search for a node containing `key`
-    while (!btree_node_is_leaf(ptr))
-    {
-        if (btree_node_get_key(ptr, btree_node_curr_size(ptr) - 1) < key)
-        {
-            child_idx = btree_node_curr_size(ptr);
-        }
-        else if (btree_node_get_key(ptr, btree_node_curr_size(ptr) - 1) == key)
-        {
-            return 1;
-        }
-        else if (btree_node_get_key(ptr, 0) > key)
-        {
-            child_idx = 0;
-        }
-        else
-        {
-            child_idx =
-                binary_search(ptr->keys, 0, btree_node_curr_size(ptr), key);
-            if (btree_node_get_key(ptr, child_idx) == key) return 1;
-            child_idx += 1;
-        }
-
-        btree_node_intl_descend(&ptr, child_idx);
-    }
-
-    // Check if the leaf contains `key`
-    if (btree_node_get_key(ptr,
-            binary_search(ptr->keys, 0, btree_node_curr_size(ptr), key)) == key)
-    {
-        return 1;
-    }
-
-    return 0;
+    BTreeNode* new_root = NULL;
+    int res             = btree_node_insert_impl(tree->root, key, &new_root);
+    tree->root          = new_root;
+    return res;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -166,3 +98,11 @@ int btree_node_contains_key(BTreeNode* root, int key)
 
 // Implemented in "delete.h"
 // TODO: This is where the API will be for delete
+
+int btree_delete(BTree* tree, BTreeKey key)
+{
+    BTreeNode* new_root = NULL;
+    int res             = btree_node_delete_impl(tree->root, key, &new_root);
+    tree->root          = new_root;
+    return res;
+}

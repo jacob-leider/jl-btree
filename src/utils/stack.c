@@ -1,13 +1,10 @@
 #include "./stack.h"
 
 #include <stdbool.h>
-#include <stddef.h>
-#include <stdint.h>
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-#include "./btree_settings.h"
+// Soon to be moved out of core
 
 // Static ----------------------------------------------------------------------
 
@@ -25,7 +22,7 @@ static void stack_set_size(Stack* stack, size_t size) { stack->size = size; }
 
 static size_t stack_capacity(Stack* stack) { return stack->capacity; }
 
-static size_t stack_set_capacity(Stack* stack, size_t capacity)
+static void stack_set_capacity(Stack* stack, size_t capacity)
 {
     stack->capacity = capacity;
 }

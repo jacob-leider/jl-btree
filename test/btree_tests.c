@@ -8,11 +8,10 @@
 #include <sys/ioctl.h>
 #include <unistd.h>
 
-#include "./btree.h"
-#include "./btree_node.h"
-#include "./btree_print.h"
-#include "./printutils.h"
-#include "./serialize.h"
+#include "../src/core/btree.h"
+#include "../src/utils/btree_print.h"
+#include "../src/utils/printutils.h"
+#include "../src/utils/serialize.h"
 #include "./testutils.h"
 
 static void cpy(FILE* in, FILE* out)
@@ -93,15 +92,6 @@ static void PrintFailureReason(
     printf(test_templ_str, test_name_in_quotes, test_num, reason);
 }
 
-static void PrintCompTrees(BTreeNode* exp, BTreeNode* res)
-{
-    printf("\nExpected: ");
-    btree_subtree_in_order_traverse(exp);
-    printf("Recieved: ");
-    btree_subtree_in_order_traverse(res);
-    printf("\n");
-}
-
 void PrintBeginTest(const char* func)
 {
     // Let's convert the PascalCase test names to snake_case. There was
@@ -154,7 +144,7 @@ void PrintTestStats(int passed, int skipped, int total)
         total, RESET, COLOR_OFF);
 }
 
-int TestBTreeNodeInsertImplCase(int* test_num,
+int TestBTreeInsertCase(int* test_num,
     int* num_passed,
     int* num_skipped,
     const char* test_name,
@@ -180,15 +170,19 @@ int TestBTreeNodeInsertImplCase(int* test_num,
     DeserializationSettings settings = {
         .node_size = node_size, .lexer_settings = NULL};
 
-    BTreeNode *before = NULL, *exp_after = NULL;
-    if (!TreeFromStr(before_str, strlen(before_str), &settings, &before) ||
+    // Deserialize
+    BTree computed_tree, exp_tree;
+    if (!TreeFromStr(
+            before_str, strlen(before_str), &settings, &computed_tree) ||
         !TreeFromStr(
-            exp_after_str, strlen(exp_after_str), &settings, &exp_after))
+            exp_after_str, strlen(exp_after_str), &settings, &exp_tree))
         return 0;
 
-    BTreeNode* after = NULL;
-    int rc           = btree_node_insert_impl(before, val, &after);
-    if (after == NULL) after = before;
+    // =======================
+    // Return code comparision
+    // =======================
+
+    int rc = btree_insert(&computed_tree, val);
 
     if (rc != exp_rc)
     {
@@ -197,8 +191,12 @@ int TestBTreeNodeInsertImplCase(int* test_num,
         return 1;
     }
 
-    BTreeCmpSettings btree_cmp_settings = {.a_root = after,
-        .b_root                                    = exp_after,
+    // ===============
+    // Tree comparison
+    // ===============
+
+    BTreeCmpSettings btree_cmp_settings = {.a_root = computed_tree.root,
+        .b_root                                    = exp_tree.root,
         .a_name                                    = "computed",
         .b_name                                    = "expected",
         .log_file_path                             = NULL};
@@ -220,16 +218,21 @@ int TestBTreeNodeInsertImplCase(int* test_num,
         return 1;
     }
 
-    // This may not work if the test failed...
-    btree_subtree_kill(after);
-    btree_subtree_kill(exp_after);
+    // ======
+    // Passed
+    // ======
+
+    btree_kill(&exp_tree);
+    btree_kill(&computed_tree);
 
     PrintPass(*test_num, test_name);
+
     *num_passed += 1;
+
     return 1;
 }
 
-int TestBTreeNodeInsertImpl()
+int TestBTreeInsert(void)
 {
     int test_num = 0, num_passed = 0, num_skipped = 0;
 
@@ -255,7 +258,7 @@ int TestBTreeNodeInsertImpl()
 
         int val = 10, exp_rc = 2;
 
-        if (!TestBTreeNodeInsertImplCase(&test_num, &num_passed, &num_skipped,
+        if (!TestBTreeInsertCase(&test_num, &num_passed, &num_skipped,
                 test_name, size, before_str, val, after_str, exp_rc))
         {
             return TestDidntExecute(test_num);
@@ -286,7 +289,7 @@ int TestBTreeNodeInsertImpl()
             "233)) 300 ((301 302 303) 310 (311 312 313) 320 (321 322 323) 330 "
             "(331 332 333))";
 
-        if (!TestBTreeNodeInsertImplCase(&test_num, &num_passed, &num_skipped,
+        if (!TestBTreeInsertCase(&test_num, &num_passed, &num_skipped,
                 test_name, size, before_str, val, after_str, exp_rc))
         {
             return TestDidntExecute(test_num);
@@ -317,7 +320,7 @@ int TestBTreeNodeInsertImpl()
             "3020 3030) 3100 (3110 3120 3130) 3200 (3210 3220 3230) 3300 (3310 "
             "3320 3330))";
 
-        if (!TestBTreeNodeInsertImplCase(&test_num, &num_passed, &num_skipped,
+        if (!TestBTreeInsertCase(&test_num, &num_passed, &num_skipped,
                 test_name, size, before_str, val, after_str, exp_rc))
         {
             return TestDidntExecute(test_num);
@@ -345,7 +348,7 @@ int TestBTreeNodeInsertImpl()
             "3020 3030) 3100 (3110 3120 3130) 3200 (3210 3220 3230) 3300 (3310 "
             "3320 3330))";
 
-        if (!TestBTreeNodeInsertImplCase(&test_num, &num_passed, &num_skipped,
+        if (!TestBTreeInsertCase(&test_num, &num_passed, &num_skipped,
                 test_name, size, before_str, val, after_str, exp_rc))
         {
             return TestDidntExecute(test_num);
@@ -374,7 +377,7 @@ int TestBTreeNodeInsertImpl()
             "3020 3030) 3100 (3110 3120 3130) 3200 (3210 3220 3230) 3300 (3310 "
             "3320 3330))";
 
-        if (!TestBTreeNodeInsertImplCase(&test_num, &num_passed, &num_skipped,
+        if (!TestBTreeInsertCase(&test_num, &num_passed, &num_skipped,
                 test_name, size, before_str, val, after_str, exp_rc))
         {
             return TestDidntExecute(test_num);
@@ -404,7 +407,7 @@ int TestBTreeNodeInsertImpl()
             "2330)) 3000 ((3010 3020 3030) 3100 (3110 3120 3130) 3200 (3210 "
             "3220 3230) 3300 (3310 3320 3330)))";
 
-        if (!TestBTreeNodeInsertImplCase(&test_num, &num_passed, &num_skipped,
+        if (!TestBTreeInsertCase(&test_num, &num_passed, &num_skipped,
                 test_name, size, before_str, val, after_str, exp_rc))
         {
             return TestDidntExecute(test_num);
@@ -434,7 +437,7 @@ int TestBTreeNodeInsertImpl()
             "3000 ((3010 3020 3030) 3100 (3110 3120 3130)) 3200 ((3210 3220 "
             "3230) 3300 (3310) 3320 (3330 3333)))";
 
-        if (!TestBTreeNodeInsertImplCase(&test_num, &num_passed, &num_skipped,
+        if (!TestBTreeInsertCase(&test_num, &num_passed, &num_skipped,
                 test_name, size, before_str, val, after_str, exp_rc))
         {
             return TestDidntExecute(test_num);
@@ -459,7 +462,7 @@ int TestBTreeNodeInsertImpl()
             "1220 1230) 1300 (1310 1320 1330)) 2000 ((2010 2020 2030) 2100 "
             "(2110 2120 2130) 2200 (2210 2220 2230) 2300 (2310 2320 2330))";
 
-        if (!TestBTreeNodeInsertImplCase(&test_num, &num_passed, &num_skipped,
+        if (!TestBTreeInsertCase(&test_num, &num_passed, &num_skipped,
                 test_name, size, before_str, val, after_str, exp_rc))
         {
             return TestDidntExecute(test_num);
@@ -473,14 +476,14 @@ int TestBTreeNodeInsertImpl()
     return 1;
 }
 
-int TestBTreeNodeDeleteImplCase(int* test_num,
+int TestBTreeDeleteCase(int* test_num,
     int* num_passed,
     int* num_skipped,
     const char* test_name,
     int node_size,
-    const char* before_tree_str,
+    const char* before_str,
     int val,
-    const char* after_tree_str,
+    const char* after_str,
     int exp_rc)
 {
     *test_num += 1;
@@ -494,28 +497,18 @@ int TestBTreeNodeDeleteImplCase(int* test_num,
     }
 #endif
 
+    BTree computed_tree, exp_tree;
+
     DeserializationSettings settings = {
         .node_size = node_size, .lexer_settings = NULL};
 
-    BTreeNode* exp_after_root;
-    if (!TreeFromStr(
-            after_tree_str, strlen(after_tree_str), &settings, &exp_after_root))
+    if (!TreeFromStr(before_str, strlen(before_str), &settings, &computed_tree))
         return 0;
 
-    BTreeNode* before_root;
-    if (!TreeFromStr(
-            before_tree_str, strlen(before_tree_str), &settings, &before_root))
+    if (!TreeFromStr(after_str, strlen(after_str), &settings, &exp_tree))
         return 0;
 
-    // BTreeNode* exp_after_root;
-    // if (!TreeFromStr(
-    //         after_tree_str, strlen(after_tree_str), node_size,
-    //         &exp_after_root))
-    //     return 0;
-
-    BTreeNode* after_root = NULL;
-    int rc = btree_node_delete_impl(before_root, val, &after_root);
-    if (!after_root) after_root = before_root;
+    int rc = btree_delete(&computed_tree, val);
 
     if (rc != exp_rc)
     {
@@ -524,8 +517,8 @@ int TestBTreeNodeDeleteImplCase(int* test_num,
         return 1;
     }
 
-    BTreeCmpSettings btree_cmp_settings = {.a_root = after_root,
-        .b_root                                    = exp_after_root,
+    BTreeCmpSettings btree_cmp_settings = {.a_root = computed_tree.root,
+        .b_root                                    = exp_tree.root,
         .a_name                                    = "computed",
         .b_name                                    = "expected",
         .log_file_path                             = NULL};
@@ -547,8 +540,8 @@ int TestBTreeNodeDeleteImplCase(int* test_num,
         return 1;
     }
 
-    btree_subtree_kill(after_root);
-    btree_subtree_kill(exp_after_root);
+    btree_kill(&computed_tree);
+    btree_kill(&exp_tree);
 
     PrintPass(*test_num, test_name);
 
@@ -556,7 +549,7 @@ int TestBTreeNodeDeleteImplCase(int* test_num,
     return 1;
 }
 
-int TestBTreeNodeDeleteImpl()
+int TestBTreeDelete(void)
 {
     int test_num = 0, num_passed = 0, num_skipped = 0;
     PrintBeginTest(__func__);
@@ -570,7 +563,7 @@ int TestBTreeNodeDeleteImpl()
         const char* after     = "(1 2 4)";
         int exp_rc            = 1;
 
-        if (!TestBTreeNodeDeleteImplCase(&test_num, &num_passed, &num_skipped,
+        if (!TestBTreeDeleteCase(&test_num, &num_passed, &num_skipped,
                 test_name, size, before, val, after, exp_rc))
             return TestDidntExecute(test_num);
     }
@@ -583,7 +576,7 @@ int TestBTreeNodeDeleteImpl()
         const char* after     = "(1 2 4) 10 (11 12 13 14)";
         int exp_rc            = 1;
 
-        if (!TestBTreeNodeDeleteImplCase(&test_num, &num_passed, &num_skipped,
+        if (!TestBTreeDeleteCase(&test_num, &num_passed, &num_skipped,
                 test_name, size, before, val, after, exp_rc))
             return TestDidntExecute(test_num);
     }
@@ -600,7 +593,7 @@ int TestBTreeNodeDeleteImpl()
         const char* after     = "(1 2 3) 4 (10) 20 (21 22 23)";
         int exp_rc            = 1;
 
-        if (!TestBTreeNodeDeleteImplCase(&test_num, &num_passed, &num_skipped,
+        if (!TestBTreeDeleteCase(&test_num, &num_passed, &num_skipped,
                 test_name, size, before, val, after, exp_rc))
             return TestDidntExecute(test_num);
     }
@@ -613,7 +606,7 @@ int TestBTreeNodeDeleteImpl()
         const char* after     = "(1 2 3) 4 (10) 20 (21)";
         int exp_rc            = 1;
 
-        if (!TestBTreeNodeDeleteImplCase(&test_num, &num_passed, &num_skipped,
+        if (!TestBTreeDeleteCase(&test_num, &num_passed, &num_skipped,
                 test_name, size, before, val, after, exp_rc))
             return TestDidntExecute(test_num);
     }
@@ -627,7 +620,7 @@ int TestBTreeNodeDeleteImpl()
         const char* after     = "(10 11) 20 (21 22 23)";
         int exp_rc            = 1;
 
-        if (!TestBTreeNodeDeleteImplCase(&test_num, &num_passed, &num_skipped,
+        if (!TestBTreeDeleteCase(&test_num, &num_passed, &num_skipped,
                 test_name, size, before, val, after, exp_rc))
             return TestDidntExecute(test_num);
     }
@@ -645,7 +638,7 @@ int TestBTreeNodeDeleteImpl()
             "230 (235))";
         int exp_rc = 1;
 
-        if (!TestBTreeNodeDeleteImplCase(&test_num, &num_passed, &num_skipped,
+        if (!TestBTreeDeleteCase(&test_num, &num_passed, &num_skipped,
                 test_name, size, before, val, after, exp_rc))
             return TestDidntExecute(test_num);
     }
@@ -660,7 +653,7 @@ int TestBTreeNodeDeleteImpl()
             "((25 26) 50 (75)) 100 ((125) 150 (175)) 200 ((225) 250 (275))";
         int exp_rc = 2;
 
-        if (!TestBTreeNodeDeleteImplCase(&test_num, &num_passed, &num_skipped,
+        if (!TestBTreeDeleteCase(&test_num, &num_passed, &num_skipped,
                 test_name, size, before, val, after, exp_rc))
             return TestDidntExecute(test_num);
     }
@@ -675,7 +668,7 @@ int TestBTreeNodeDeleteImpl()
             "((25 50) 100 (125) 150 (175)) 200 ((225) 250 (275))";
         int exp_rc = 1;
 
-        if (!TestBTreeNodeDeleteImplCase(&test_num, &num_passed, &num_skipped,
+        if (!TestBTreeDeleteCase(&test_num, &num_passed, &num_skipped,
                 test_name, size, before, val, after, exp_rc))
             return TestDidntExecute(test_num);
     }
@@ -691,7 +684,7 @@ int TestBTreeNodeDeleteImpl()
             "((50 75) 100 (125) 150 (175)) 200 ((225) 250 (275))";
         int exp_rc = 1;
 
-        if (!TestBTreeNodeDeleteImplCase(&test_num, &num_passed, &num_skipped,
+        if (!TestBTreeDeleteCase(&test_num, &num_passed, &num_skipped,
                 test_name, size, before, val, after, exp_rc))
             return TestDidntExecute(test_num);
     }
