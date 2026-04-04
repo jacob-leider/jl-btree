@@ -171,7 +171,7 @@ int TestBTreeInsertCase(int* test_num,
         .node_size = node_size, .lexer_settings = NULL};
 
     // Deserialize
-    BTree computed_tree, exp_tree;
+    BTree *computed_tree, *exp_tree;
     if (!TreeFromStr(
             before_str, strlen(before_str), &settings, &computed_tree) ||
         !TreeFromStr(
@@ -182,7 +182,7 @@ int TestBTreeInsertCase(int* test_num,
     // Return code comparision
     // =======================
 
-    int rc = btree_insert(&computed_tree, val);
+    int rc = btree_insert(computed_tree, val);
 
     if (rc != exp_rc)
     {
@@ -195,8 +195,8 @@ int TestBTreeInsertCase(int* test_num,
     // Tree comparison
     // ===============
 
-    BTreeCmpSettings btree_cmp_settings = {.a_root = computed_tree.root,
-        .b_root                                    = exp_tree.root,
+    BTreeCmpSettings btree_cmp_settings = {.a_root = computed_tree->root,
+        .b_root                                    = exp_tree->root,
         .a_name                                    = "computed",
         .b_name                                    = "expected",
         .log_file_path                             = NULL};
@@ -222,8 +222,8 @@ int TestBTreeInsertCase(int* test_num,
     // Passed
     // ======
 
-    btree_kill(&exp_tree);
-    btree_kill(&computed_tree);
+    btree_kill(exp_tree);
+    btree_kill(computed_tree);
 
     PrintPass(*test_num, test_name);
 
@@ -497,7 +497,7 @@ int TestBTreeDeleteCase(int* test_num,
     }
 #endif
 
-    BTree computed_tree, exp_tree;
+    BTree *computed_tree, *exp_tree;
 
     DeserializationSettings settings = {
         .node_size = node_size, .lexer_settings = NULL};
@@ -508,7 +508,7 @@ int TestBTreeDeleteCase(int* test_num,
     if (!TreeFromStr(after_str, strlen(after_str), &settings, &exp_tree))
         return 0;
 
-    int rc = btree_delete(&computed_tree, val);
+    int rc = btree_delete(computed_tree, val);
 
     if (rc != exp_rc)
     {
@@ -517,8 +517,8 @@ int TestBTreeDeleteCase(int* test_num,
         return 1;
     }
 
-    BTreeCmpSettings btree_cmp_settings = {.a_root = computed_tree.root,
-        .b_root                                    = exp_tree.root,
+    BTreeCmpSettings btree_cmp_settings = {.a_root = computed_tree->root,
+        .b_root                                    = exp_tree->root,
         .a_name                                    = "computed",
         .b_name                                    = "expected",
         .log_file_path                             = NULL};
@@ -540,8 +540,8 @@ int TestBTreeDeleteCase(int* test_num,
         return 1;
     }
 
-    btree_kill(&computed_tree);
-    btree_kill(&exp_tree);
+    btree_kill(computed_tree);
+    btree_kill(exp_tree);
 
     PrintPass(*test_num, test_name);
 
@@ -554,6 +554,19 @@ int TestBTreeDelete(void)
     int test_num = 0, num_passed = 0, num_skipped = 0;
     PrintBeginTest(__func__);
 
+    // Case 1
+    {
+        const char* test_name = "";
+        int size              = 3;
+        const char* before    = "3";
+        int val               = 3;
+        const char* after     = "";
+        int exp_rc            = 1;
+
+        if (!TestBTreeDeleteCase(&test_num, &num_passed, &num_skipped,
+                test_name, size, before, val, after, exp_rc))
+            return TestDidntExecute(test_num);
+    }
     // Case 1
     {
         const char* test_name = "";

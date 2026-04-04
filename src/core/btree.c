@@ -1,8 +1,11 @@
 #include "./btree.h"
 
 #include <limits.h>
+#include <stdio.h>
+#include <string.h>
 
 #include "./btree_node.h"
+#include "./mem.h"
 
 /// Formal-ish Definition of a BTree
 ///
@@ -78,7 +81,38 @@ static void btree_subtree_kill(BTreeNode* node)
     btree_node_kill(node);
 }
 
-void btree_kill(BTree* tree) { btree_subtree_kill(tree->root); }
+void btree_kill(BTree* tree)
+{
+    btree_subtree_kill(tree->root);
+    free(tree);
+}
+
+// TODO: This is causing the compiler to freak out. You need to figure out how
+// this works depending on whether the node size is predefined or not.
+BTree* btree_init(size_t order)
+{
+    BTree* tree = (BTree*)jl_btree_malloc(sizeof(BTree));
+    if (tree == NULL)
+    {
+        return NULL;
+    }
+
+    // TODO: TERRIBLE solution. Do this differently.
+#ifdef BTREE_NODE_NODE_SIZE
+    order = BTREE_NODE_NODE_SIZE;
+#endif
+
+    BTreeNode* root = NULL;
+    if (!btree_node_init(order, &root, false))
+    {
+        free(tree);
+        return NULL;
+    }
+
+    tree->root = root;
+
+    return tree;
+}
 
 ////////////////////////////////////////////////////////////////////////////////
 // INSERTION                                                                  //

@@ -29,7 +29,7 @@ typedef struct DeserializationSettings
 // Tree deserializers
 
 int TreeFromStr(
-    const char* str, int len, DeserializationSettings* settings, BTree* tree);
+    const char* str, int len, DeserializationSettings* settings, BTree** tree);
 
 // Tree serializers
 

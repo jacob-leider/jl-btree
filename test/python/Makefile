@@ -26,15 +26,15 @@ OBJS := $(CORE_SRCS:$(CORE_SRC_DIR)/%.c=$(DLL_DIR)/%.o)
 
 # Default target (optional)
 .PHONY: all
-all: jl_btree
+all: jl_btree.so
 
 # Test target
-.PHONY: jl_btree 
+.PHONY: jl_btree.so
 jl_btree: $(TARGET)
 
 # Link
 $(TARGET): $(OBJS) | $(DLL_DIR)
-	$(CC) $(CFLAGS) -o $@ $^
+	$(CC) $(CFLAGS) -shared -o $@ $^
 
 # Compile core src files
 $(DLL_DIR)/%.o: $(CORE_SRC_DIR)/%.c | $(DLL_DIR)

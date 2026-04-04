@@ -20,4 +20,6 @@ int btree_delete(BTree* tree, BTreeKey key);
 
 void btree_kill(BTree* tree);
 
+BTree* btree_init(size_t order);
+
 #endif

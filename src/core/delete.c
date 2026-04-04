@@ -786,13 +786,24 @@ int btree_node_delete_impl(
             return 0;
         }
 
-        // Root is squashed
-        left  = btree_node_get_child(root, 0);
-        right = btree_node_get_child(root, 1);
+        // TODO: Are we sure this is correct?
+        if (!btree_node_is_leaf(root))
+        {
+            // Root is squashed
+            left  = btree_node_get_child(root, 0);
+            right = btree_node_get_child(root, 1);
 
-        btree_node_merge_sibs(left, right, root, 0);
+            btree_node_merge_sibs(left, right, root, 0);
 
-        *new_root_ptr = left;
+            *new_root_ptr = left;
+        }
+        else
+        {
+            // TODO: This seems to work but I don't entirely understand why.
+            // There needs to be a major refactor so it is clear what happens in
+            // the case where a root is a leaf with too few children.
+            ptr = root;
+        }
     }
     else
     {

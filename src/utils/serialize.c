@@ -561,8 +561,10 @@ bool ProvideParseContext(Token* tok_seq,
  *
  * @return 1 on success, 0 on failure (it will also scream at you on failure)
  */
-int TreeFromStr(
-    const char* str, int len, DeserializationSettings* settings, BTree* tree)
+int TreeFromStr(const char* str,
+    int len,
+    DeserializationSettings* settings,
+    BTree** tree_ptr)
 {
     // Validate settings
     if (settings->node_size < 1)
@@ -594,14 +596,28 @@ int TreeFromStr(
         return 0;
     }
 
-    BTreeNode* root = NULL;
-    bool is_intl    = parse_ctx.depth > 0;
-    if (!btree_node_init(settings->node_size, &root, is_intl))
+    BTree* tree = btree_init(settings->node_size);
+    if (tree == NULL)
     {
         return 0;
     }
 
-    BTreeNode* ptr = root;
+    bool is_intl = parse_ctx.depth > 0;
+
+    // btree_init automatically creates the root as a leaf node. We override
+    // that here.
+    // TODO: Find a cleaner and more efficient way to do this.
+    btree_node_kill(tree->root);
+    tree->root = NULL;
+
+    if (!btree_node_init(settings->node_size, &tree->root, is_intl))
+    {
+        free(tree);
+        return 0;
+    }
+
+    BTreeNode* ptr = tree->root;
+
     for (int idx = 0; idx < n_tokens; idx++)
     {
         TokenType type = tok_seq[idx].type;
@@ -660,7 +676,7 @@ int TreeFromStr(
         }
     }
 
-    tree->root = root;
+    *tree_ptr = tree;
 
     return 1;
 }

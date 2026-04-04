@@ -63,6 +63,7 @@ bool btree_node_leaf_init(
 
     btree_node_set_left_sib(node, NULL);
     btree_node_set_right_sib(node, NULL);
+    btree_node_set_children(node, NULL);
 
     *node_ptr = node;
 
