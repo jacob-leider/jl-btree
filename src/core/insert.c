@@ -71,6 +71,62 @@ static size_t compute_child_idx(BTreeNode* node, BTreeKey key, bool* found_key)
     return child_idx;
 }
 
+bool compute_child_index_and_hint(BTreeNode* ptr,
+    BTreeKey key,
+    BTreeNode** last_nonfull_anc_ptr,
+    size_t* child_hint_cache,
+    size_t* child_hint_cache_index_ptr,
+    size_t* child_idx_ptr)
+{
+    // Unpack
+    BTreeNode* last_nonfull_anc   = *last_nonfull_anc_ptr;
+    size_t child_hint_cache_index = *child_hint_cache_index_ptr;
+    size_t child_idx              = *child_idx_ptr;
+
+    bool found_key                = false;
+
+    // If this node isn't full, its ancestors won't be affected by insertion
+    // EXCEPT that their subtree sizes will need to be incremented. Do that
+    // now.
+    if (!btree_node_is_full(ptr))
+    {
+        update_subtree_sizes_upwards(ptr, last_nonfull_anc, +1);
+        last_nonfull_anc = ptr;
+
+        // Clear the stack
+        child_hint_cache_index = 0;
+    }
+
+    // Find the next ancestor
+    // TODO: Only compute the ``after split" child index if we know this
+    // node will be split
+    child_idx = compute_child_idx(ptr, key, &found_key);
+    size_t child_idx_after_split_var =
+        child_idx_after_split(ptr, key, child_idx);
+
+    if (found_key)
+    {
+        return 0;
+    }
+
+    // Your b-tree is COLOSSAL.
+    if (child_hint_cache_index + 1 == DEFAULT_CHILD_IDX_CACHE_SIZE)
+    {
+        return false;
+    }
+
+    // Push child index onto cache stack
+    child_hint_cache[child_hint_cache_index] = child_idx_after_split_var;
+    child_hint_cache_index += 1;
+
+    // Repack
+    *last_nonfull_anc_ptr       = last_nonfull_anc;
+    *child_hint_cache_index_ptr = child_hint_cache_index;
+    *child_idx_ptr              = child_idx;
+
+    return true;
+}
+
 /**
  * @brief Finds the leaf of (the tree rooted at) `root` where `key` should be
  * inserted.
@@ -129,72 +185,20 @@ bool btree_node_find_closest_nonfull_anc(BTreeNode* root,
     BTreeNode* last_nonfull_anc = NULL;
     while (!btree_node_is_leaf(ptr))
     {
-        // If this node isn't full, its ancestors won't be affected by insertion
-        // EXCEPT that their subtree sizes will need to be incremented. Do that
-        // now.
-        if (!btree_node_is_full(ptr))
+        if (!compute_child_index_and_hint(ptr, key, &last_nonfull_anc,
+                child_hint_cache, &child_hint_cache_index, &child_idx))
         {
-            update_subtree_sizes_upwards(ptr, last_nonfull_anc, +1);
-            last_nonfull_anc = ptr;
-
-            // Clear the stack
-            child_hint_cache_index = 0;
+            return false;
         }
-
-        // Find the next ancestor
-        // TODO: Only compute the ``after split" child index if we know this
-        // node will be split
-        child_idx = compute_child_idx(ptr, key, &found_key);
-        size_t child_idx_after_split_var =
-            child_idx_after_split(ptr, key, child_idx);
-
-        if (found_key)
-        {
-            return 0;
-        }
-
-        if (child_hint_cache_index + 1 == DEFAULT_CHILD_IDX_CACHE_SIZE)
-        {
-            return false;  // OOM
-        }
-        // TODO: This size should also be a local parameter in case we want
-        // to override it
-        child_hint_cache[child_hint_cache_index] = child_idx_after_split_var;
-        child_hint_cache_index += 1;
 
         btree_node_intl_descend(&ptr, child_idx);
     }
 
-    if (!btree_node_is_full(ptr))
-    {
-        update_subtree_sizes_upwards(ptr, last_nonfull_anc, +1);
-        last_nonfull_anc = ptr;
-
-        // Clear the stack
-        child_hint_cache_index = 0;
-    }
-
-    // Find the next ancestor
-    // TODO: Only compute the ``after split" child index if we know this
-    // node will be split
-    child_idx = compute_child_idx(ptr, key, &found_key);
-    size_t child_idx_after_split_var =
-        child_idx_after_split(ptr, key, child_idx);
-
-    if (found_key)
-    {
-        return 0;
-    }
-
-    // Your b-tree is COLOSSAL.
-    if (child_hint_cache_index + 1 == DEFAULT_CHILD_IDX_CACHE_SIZE)
+    if (!compute_child_index_and_hint(ptr, key, &last_nonfull_anc,
+            child_hint_cache, &child_hint_cache_index, &child_idx))
     {
         return false;
     }
-
-    // Push child index onto cache stack
-    child_hint_cache[child_hint_cache_index] = child_idx_after_split_var;
-    child_hint_cache_index += 1;
 
 #if REDUNDANT < 1
     // TODO: find_idx... is broken
