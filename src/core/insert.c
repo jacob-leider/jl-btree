@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <stdio.h>
 
+#include "./btree_key.h"
 #include "./btree_node.h"
 #include "./btree_settings.h"
 #include "./contains.h"
@@ -12,11 +13,15 @@
 
 // Child index will depend on which half of `ptr` the next ancestor belongs to
 static size_t child_idx_after_split(
-    BTreeNode* ptr, const BTreeKey key, const size_t child_idx)
+    BTreeNode* ptr, BTreeKey2* key, size_t child_idx, BTreeKeyComparator cmp)
 {
-    const size_t mid = btree_node_node_size(ptr) / 2;
-    if (btree_node_is_full(ptr) && key > btree_node_get_key(ptr, mid))
+    const size_t mid         = btree_node_node_size(ptr) / 2;
+    const BTreeKey2* mid_key = btree_node_get_key(ptr, mid);
+
+    if (btree_node_is_full(ptr) && btree_key_gt(key, mid_key, cmp))
+    {
         return child_idx - mid - 1;
+    }
 
     return child_idx;
 }
@@ -31,41 +36,59 @@ static void update_subtree_sizes_upwards(
     }
 }
 
-static size_t compute_child_idx(BTreeNode* node, BTreeKey key, bool* found_key)
+/**
+ * @brief Compute the index of the child whose range contains `key`
+ *
+ * @param[in] node [TODO]
+ * @param[in] key [TODO]
+ * @param[out] found_key [TODO]
+ * @param[in] cmp [TODO]
+ *
+ * @return An unsigned int - index of the child whose range contains `key`
+ */
+static size_t compute_child_idx(
+    BTreeNode* node, BTreeKey2* key, bool* found_key, BTreeKeyComparator cmp)
 {
-    size_t child_idx = 0;
-    *found_key       = 0;
+    size_t child_idx     = 0;
+    *found_key           = 0;
 
-    if (btree_node_get_last_key(node) < key)
+    BTreeKey2* last_key  = btree_node_get_last_key(node);
+    BTreeKey2* first_key = btree_node_get_first_key(node);
+
+    // TODO: Get rid of redundant comparisons
+    if (btree_key_lt(last_key, key, cmp))
     {
         child_idx = btree_node_num_keys(node);
     }
 #if REDUNDANT < 1
-    else if (btree_node_get_last_key(node) == key)
+    else if (btree_key_eq(last_key, key, cmp))
     {
         *found_key = 1;
     }
 #endif
-    else if (btree_node_get_first_key(node) > key)
+    else if (btree_key_lt(key, first_key, cmp))
     {
         child_idx = 0;
     }
     else
     {
-        child_idx = binary_search(
-            btree_node_keys(node), 0, btree_node_num_keys(node), key);
-#if REDUNDANT < 1
-        if (btree_node_get_key(node, child_idx) == key)
+        child_idx = binary_search_2(btree_node_keys(node), 0,
+            btree_node_num_keys(node), key, sizeof(BTreeKey2*), cmp);
+
+        // TODO: Rename this variable. It is unclear what you mean by
+        // "child_key". This variable stores the greatest key _not greater than_
+        // `key`.
+        BTreeKey2* child_key = btree_node_get_key(node, child_idx);
+        if (btree_key_cmp(key, child_key, cmp))
         {
             *found_key = 1;
         }
         else
         {
-#endif
+            // The key at `child_idx` is less than or equal to `key`, so the
+            // child whose range contains `key` is the child _after_ `child_idx`
             child_idx += 1;
-#if REDUNDANT < 1
         }
-#endif
     }
 
     return child_idx;
@@ -94,16 +117,18 @@ static size_t compute_child_idx(BTreeNode* node, BTreeKey key, bool* found_key)
  * `leaf`) that are full
  * @param[out] child_hint_cache path from last_nonfull_anc (or new root if all
  * ancestors are full) to the leaf where `key` will be inserted.
+ * @param[in] cmp [TODO]
  *
  * @return a return code
  *    - 0: Error
  *    - 1: (success) Didn't find `key`: `node_ptr` points to the leaf where
  *    `key` should be inserted
  */
-bool btree_node_find_closest_nonfull_anc(BTreeNode* root,
-    const BTreeKey key,
+static bool btree_node_find_closest_nonfull_anc(BTreeNode* root,
+    BTreeKey2* key,
     BTreeNode** last_nonfull_anc_ptr,
-    size_t* child_hint_cache)
+    size_t* child_hint_cache,
+    BTreeKeyComparator cmp)
 {
     size_t child_hint_cache_index = 0;
 
@@ -144,19 +169,21 @@ bool btree_node_find_closest_nonfull_anc(BTreeNode* root,
         // Find the next ancestor
         // TODO: Only compute the ``after split" child index if we know this
         // node will be split
-        child_idx = compute_child_idx(ptr, key, &found_key);
+        child_idx = compute_child_idx(ptr, key, &found_key, cmp);
         size_t child_idx_after_split_var =
-            child_idx_after_split(ptr, key, child_idx);
+            child_idx_after_split(ptr, key, child_idx, cmp);
 
         if (found_key)
         {
-            return 0;
+            // Should have been caught before this function was called.
+            return false;
         }
 
         if (child_hint_cache_index + 1 == DEFAULT_CHILD_IDX_CACHE_SIZE)
         {
             return false;  // OOM
         }
+
         // TODO: This size should also be a local parameter in case we want
         // to override it
         child_hint_cache[child_hint_cache_index] = child_idx_after_split_var;
@@ -177,13 +204,13 @@ bool btree_node_find_closest_nonfull_anc(BTreeNode* root,
     // Find the next ancestor
     // TODO: Only compute the ``after split" child index if we know this
     // node will be split
-    child_idx = compute_child_idx(ptr, key, &found_key);
+    child_idx = compute_child_idx(ptr, key, &found_key, cmp);
     size_t child_idx_after_split_var =
-        child_idx_after_split(ptr, key, child_idx);
+        child_idx_after_split(ptr, key, child_idx, cmp);
 
     if (found_key)
     {
-        return 0;
+        return false;
     }
 
     // Your b-tree is COLOSSAL.
@@ -332,13 +359,15 @@ bool btree_node_split(BTreeNode* node, BTreeNode** rsib_ptr, int* next_key_ptr)
  *    - 1: OK
  *    - 2: `val` already exists in the subtree with root `root`
  */
-int btree_node_insert_impl(
-    BTreeNode* root, const BTreeKey key, BTreeNode** new_root_ptr)
+int btree_node_insert_impl(BTreeNode* root,
+    BTreeKey2* key,
+    BTreeNode** new_root_ptr,
+    BTreeKeyComparator cmp)
 {
     // By default, the root of the tree doesn't change
     *new_root_ptr = root;
 
-    if (btree_node_contains_key(root, key))
+    if (btree_node_contains_key(root, key, cmp))
     {
         // Exit early if we find `key` in the tree.
         return 2;

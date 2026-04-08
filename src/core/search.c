@@ -1,3 +1,8 @@
+
+#include "search.h"
+
+#include <stddef.h>
+
 // @brief binary search algorithm
 //
 // @details The invariants of the loop are:
@@ -34,6 +39,34 @@ int binary_search(int* arr, int lo, int hi, int target)
             hi = mid;
         else if (arr[mid] <= target)
             lo = mid;
+    }
+
+    return lo;
+}
+
+int binary_search_2(char* arr,
+    size_t lo,
+    size_t hi,
+    char* target,
+    size_t target_size,
+    int (*cmp)(char*, char*))
+{
+    if (hi < lo) return 0;
+
+    while (lo < hi - 1)
+    {
+        int mid       = (lo + hi) / 2;
+
+        char* mid_obj = arr + mid;
+
+        if (cmp(target, mid_obj) < 0)  // `target < mid_obj`
+        {
+            hi = mid;
+        }
+        else
+        {
+            lo = mid;
+        }
     }
 
     return lo;

@@ -3,6 +3,7 @@
 #include <assert.h>
 #include <stdbool.h>
 
+#include "./btree_key.h"
 #include "btree_node.h"
 #include "btree_settings.h"
 #include "contains.h"
@@ -45,7 +46,8 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 // Determines which of `node`'s children is the root of a subtree containg `key`
-static size_t compute_child_idx(BTreeNode* node, BTreeKey key, bool* found_key)
+static size_t compute_child_idx(
+    BTreeNode* node, BTreeKey2* key, bool* found_key)
 {
     size_t child_idx = 0;
     *found_key       = 0;

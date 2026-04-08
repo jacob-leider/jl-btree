@@ -51,8 +51,8 @@ bool btree_node_leaf_init(
     btree_node_set_curr_size(node, 0);
     btree_node_set_num_children(node, 0);
 
-    BTreeKey* keys_ptr = (BTreeKey*)jl_btree_malloc(
-        sizeof(BTreeKey) * btree_node_node_size(node));
+    BTreeKey2** keys_ptr = (BTreeKey2**)jl_btree_malloc(
+        sizeof(BTreeKey2*) * btree_node_node_size(node));
     if (keys_ptr == NULL)
     {
         jl_btree_free(node);
@@ -102,8 +102,8 @@ int btree_node_intl_init(
     btree_node_set_curr_size(node, 0);
     btree_node_set_num_children(node, 0);
 
-    BTreeKey* keys_ptr = (BTreeKey*)jl_btree_malloc(
-        sizeof(BTreeKey) * btree_node_node_size(node));
+    BTreeKey2** keys_ptr = (BTreeKey2**)jl_btree_malloc(
+        sizeof(BTreeKey2*) * btree_node_node_size(node));
     if (keys_ptr == NULL)
     {
         jl_btree_free(node);
@@ -194,19 +194,19 @@ int btree_node_get_last_key(BTreeNode* node)
     return btree_node_get_key(node, last_key_idx(node));
 }
 
-void btree_node_set_key(BTreeNode* node, size_t idx, BTreeKey key)
+void btree_node_set_key(BTreeNode* node, size_t idx, BTreeKey2* key)
 {
     assert(idx < btree_node_node_size(node));
 
     btree_node_keys(node)[idx] = key;
 }
 
-void btree_node_set_first_key(BTreeNode* node, BTreeKey key)
+void btree_node_set_first_key(BTreeNode* node, BTreeKey2* key)
 {
     btree_node_set_key(node, 0, key);
 }
 
-void btree_node_set_last_key(BTreeNode* node, BTreeKey key)
+void btree_node_set_last_key(BTreeNode* node, BTreeKey2* key)
 {
     btree_node_set_key(node, last_key_idx(node), key);
 }
@@ -287,25 +287,32 @@ void btree_node_get_sibs(const BTreeNode* node,
 }
 
 // @brief points `idx_ptr` to the index of the least key ordered after `val`
-size_t find_idx_of_min_key_greater_than_val(BTreeNode* node, BTreeKey key)
+size_t find_idx_of_min_key_greater_than_val(
+    BTreeNode* node, BTreeKey2* key, int (*cmp)(char*, size_t, char*, size_t))
 {
     // duh
     if (btree_node_is_empty(node)) return 0;
 
-    size_t idx = binary_search(
-        btree_node_keys(node), 0, btree_node_curr_size(node), key);
+    size_t idx = binary_search_2(btree_node_keys(node), 0,
+        btree_node_curr_size(node), key, sizeof(BTreeKey2*), cmp);
 
-    if (btree_node_get_key(node, idx) == key) return 2;
+    if (btree_key_eq(btree_node_get_key(node, idx), key, cmp))
+    {
+        return 2;
+    }
 
-    // Step onto first index pointing to a value larger than `val`
-    if (btree_node_get_key(node, idx) < key) idx += 1;
+    if (btree_key_lt(btree_node_get_key(node, idx), key, cmp))
+    {
+        // Step onto first index pointing to a value larger than `val`
+        idx += 1;
+    }
 
     return idx;
 }
 
 /// PUSH/POP PRIMITIVES: btree_node_(pop|push)_(front|back)_(key|child)
 
-void btree_node_insert_key(BTreeNode* node, size_t idx, BTreeKey key)
+void btree_node_insert_key(BTreeNode* node, size_t idx, BTreeKey2* key)
 {
     assert(node != NULL);
     assert(btree_node_num_keys(node) < btree_node_node_size(node));
@@ -314,7 +321,7 @@ void btree_node_insert_key(BTreeNode* node, size_t idx, BTreeKey key)
     btree_node_inc_num_keys_1(node);
     if (btree_node_num_keys(node) > 1)
     {
-        BTreeKey temp = 0;
+        BTreeKey2* temp = 0;
         for (size_t i = idx; i < btree_node_num_keys(node) - 1; i++)
         {
             temp = btree_node_get_key(node, i);
@@ -326,13 +333,13 @@ void btree_node_insert_key(BTreeNode* node, size_t idx, BTreeKey key)
     btree_node_set_key(node, idx, key);
 }
 
-void btree_node_push_front_key(BTreeNode* node, BTreeKey key)
+void btree_node_push_front_key(BTreeNode* node, BTreeKey2* key)
 {
     // Validate: Can't be full already
     btree_node_insert_key(node, 0, key);
 }
 
-void btree_node_push_back_key(BTreeNode* node, BTreeKey key)
+void btree_node_push_back_key(BTreeNode* node, BTreeKey2* key)
 {
     // Validate: Can't be full already
     btree_node_insert_key(node, btree_node_num_keys(node), key);
@@ -340,7 +347,7 @@ void btree_node_push_back_key(BTreeNode* node, BTreeKey key)
 
 // Stores first key in `key` and shifts all other keys left
 
-void btree_node_remove_key(BTreeNode* node, size_t idx, BTreeKey* key_ptr)
+void btree_node_remove_key(BTreeNode* node, size_t idx, BTreeKey2** key_ptr)
 {
     // Validate: Can't be empty, idx must be in bounds
     assert(node != NULL);
@@ -364,12 +371,12 @@ void btree_node_remove_key(BTreeNode* node, size_t idx, BTreeKey* key_ptr)
     btree_node_dec_num_keys_1(node);
 }
 
-void btree_node_pop_front_key(BTreeNode* node, BTreeKey* key_ptr)
+void btree_node_pop_front_key(BTreeNode* node, BTreeKey2** key_ptr)
 {
     btree_node_remove_key(node, 0, key_ptr);
 }
 
-void btree_node_pop_back_key(BTreeNode* node, BTreeKey* key_ptr)
+void btree_node_pop_back_key(BTreeNode* node, BTreeKey2** key_ptr)
 {
     btree_node_remove_key(node, last_key_idx(node), key_ptr);
 }
@@ -496,10 +503,12 @@ void btree_node_pop_back_child(BTreeNode* node, BTreeNode** child_ptr)
 //    - 0: Error
 //    - 1: OK
 //    - 2: Value already in the node
-void btree_node_insert_key_and_child_assuming_not_full(
-    BTreeNode* node, const BTreeKey key, BTreeNode* child)
+void btree_node_insert_key_and_child_assuming_not_full(BTreeNode* node,
+    const BTreeKey2* key,
+    BTreeNode* child,
+    int (*cmp)(char*, size_t, char*, size_t))
 {
-    size_t idx = find_idx_of_min_key_greater_than_val(node, key);
+    size_t idx = find_idx_of_min_key_greater_than_val(node, key, cmp);
 
     if (idx == btree_node_curr_size(node))
     {
@@ -538,7 +547,7 @@ void btree_node_copy_key_range(BTreeNode* to,
     size_t num_keys)
 {
     memcpy(to->keys + to_start, from->keys + from_start,
-        num_keys * sizeof(BTreeKey));
+        num_keys * sizeof(BTreeKey2*));
 }
 
 void btree_node_append_key_range(
@@ -578,7 +587,7 @@ void btree_node_append_child_range(
 
 void btree_node_clear_key_range(BTreeNode* node, size_t start, size_t num_keys)
 {
-    memset(btree_node_keys(node) + start, 0, num_keys * sizeof(BTreeKey));
+    memset(btree_node_keys(node) + start, 0, num_keys * sizeof(BTreeKey2*));
 }
 
 void btree_node_clear_child_range(
