@@ -50,27 +50,24 @@ static size_t compute_child_idx(BTreeNode* node, BTreeKey key, bool* found_key)
     size_t child_idx = 0;
     *found_key       = 0;
 
-    // Error. Subtracting 1 causes underflow.
-    assert(btree_node_curr_size(node) > 0);
-
-    if (btree_node_get_key(node, btree_node_curr_size(node) - 1) < key)
+    if (btree_node_get_last_key(node) < key)
     {
-        child_idx = btree_node_curr_size(node);
+        child_idx = btree_node_num_keys(node);
     }
 #if REDUNDANT < 1
-    else if (btree_node_get_key(node, btree_node_curr_size(node) - 1) == key)
+    else if (btree_node_get_last_key(node) == key)
     {
         *found_key = 1;
     }
 #endif
-    else if (btree_node_get_key(node, 0) > key)
+    else if (btree_node_get_first_key(node) > key)
     {
         child_idx = 0;
     }
     else
     {
-        child_idx =
-            binary_search(node->keys, 0, btree_node_curr_size(node), key);
+        child_idx = binary_search(
+            btree_node_keys(node), 0, btree_node_num_keys(node), key);
 #if REDUNDANT < 1
         if (btree_node_get_key(node, child_idx) == key)
         {
