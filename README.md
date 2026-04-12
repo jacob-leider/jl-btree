@@ -14,4 +14,4 @@ Things I'm Actively Working On:
 
 Things I Plan to Implement:
 - subtree-level locking scheme in order to provide a safe framework for writing multithreaded b-tree operations
-- platform-independent paging scheme so b-trees can interact more directly with files
+- platform-independent paging scheme so b-trees can interact more directly with persistent memory
