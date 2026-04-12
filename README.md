@@ -10,6 +10,7 @@ This project exists mostly for my own educational benifit. For the most part, I 
 # Contribution
 Things I'm Actively Working On:
 - Allowing for custom key types
+- Letting callers choose between various insertion/deletion algorithms
 - Efficient b-tree serialization/deserialization
 
 Things I Plan to Implement:
