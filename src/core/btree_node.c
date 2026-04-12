@@ -10,13 +10,6 @@
 #include "./mem.h"
 #include "./search.h"
 
-/// LOGGER
-
-static void log_message(const char* message, unsigned int line)
-{
-    printf("\t-LOGGER: %s (File: %s, Line: %d)\n", message, __FILE__, line);
-}
-
 /// INITIALIZERS & DESTRUCTORS
 
 // @brief Points `node` to a (pointer to a) btree leaf node of
@@ -168,6 +161,19 @@ void btree_node_kill(BTreeNode* node)
     }
 }
 
+/************************************************************/
+
+// Storage routine
+
+void btree_node_write_key(BTreeNode* node, size_t idx, BTreeKey key)
+{
+    assert(idx < btree_node_node_size(node));
+
+    btree_node_keys(node)[idx] = key;
+}
+
+/************************************************************/
+
 // ACCESSORS (1): btree_node_(get|set)_(key|child)
 
 static size_t last_key_idx(BTreeNode* node)
@@ -196,9 +202,7 @@ int btree_node_get_last_key(BTreeNode* node)
 
 void btree_node_set_key(BTreeNode* node, size_t idx, BTreeKey key)
 {
-    assert(idx < btree_node_node_size(node));
-
-    btree_node_keys(node)[idx] = key;
+    btree_node_write_key(node, idx, key);
 }
 
 void btree_node_set_first_key(BTreeNode* node, BTreeKey key)

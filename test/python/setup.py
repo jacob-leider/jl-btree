@@ -14,9 +14,9 @@ if __name__ == "__main__":
     os.environ['SDKROOT'] = '/Library/Developer/CommandLineTools/SDKs/MacOSX13.3.sdk'
 
     all_sources = get_btree_core_sources(
-    ) + ["hello.c"]
+    ) + ["./bindings/jl_btree_bindings.c"]
 
-    module = Extension("hello", sources=all_sources)
+    module = Extension("jl_btree", sources=all_sources)
 
     setup(
         name="HelloModule",
