@@ -19,7 +19,7 @@ if __name__ == "__main__":
     module = Extension("jl_btree", sources=all_sources)
 
     setup(
-        name="HelloModule",
+        name="jl_btree",
         version="1.0",
         description="A starter C extension for Python",
         ext_modules=[module],
