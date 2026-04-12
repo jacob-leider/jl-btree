@@ -12,6 +12,7 @@ CFLAGS := -Wall -Wpedantic -Wextra -std=c11 -I./src -I../../src/core -g
 
 # Directories
 CORE_SRC_DIR := ../../src/core
+
 # TODO: Rename this to something more conventional for python extension libraries
 DLL_DIR := ./shared
 

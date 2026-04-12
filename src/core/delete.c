@@ -117,6 +117,11 @@ static bool btree_node_can_spare_or_borrow_key(
         return btree_node_curr_size(node) > 1;
     }
 
+    // child_idx may have been passed in uninitialized, but only if the node is
+    // a root. In that case, we would've alredy returned.
+    //
+    // TODO: Make this logic more explicit.
+
     BTreeNode* left  = NULL;
     BTreeNode* right = NULL;
     btree_node_get_sibs(node, child_idx, &left, &right);

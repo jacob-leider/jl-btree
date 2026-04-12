@@ -152,12 +152,8 @@ void btree_node_get_sibs(const BTreeNode* node,
 
 void btree_node_intl_descend(BTreeNode** node, size_t idx);
 
-size_t find_idx_of_min_key_greater_than_val(BTreeNode* node, BTreeKey val);
-
-// Remove, insert key/child
-
-void btree_node_insert_key_and_child_assuming_not_full(
-    BTreeNode* node, const BTreeKey key, BTreeNode* child);
+size_t find_idx_of_min_key_greater_than_val(
+    BTreeNode* node, BTreeKey val, bool* found);
 
 // Accessors
 

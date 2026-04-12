@@ -180,7 +180,6 @@ bool btree_node_find_closest_nonfull_anc(BTreeNode* root,
 
     // We expect the caller to ensure the tree doesn't contain this key, but
     // may handle this case better in the future
-    bool found_key              = 0;
     BTreeNode* ptr              = root;
     BTreeNode* last_nonfull_anc = NULL;
     while (!btree_node_is_leaf(ptr))
@@ -411,8 +410,11 @@ int btree_node_insert_impl(
         depth += 1;
     }
 
-    assert(child_hint_cache[depth] ==
-           find_idx_of_min_key_greater_than_val(a, key));
+    // clang-format off
+    bool found = false;
+    assert(child_hint_cache[depth] == find_idx_of_min_key_greater_than_val(a, key, &found));
+    assert(!found);
+    // clang-format on
 
     btree_node_insert_key(a, child_hint_cache[depth], key);
 

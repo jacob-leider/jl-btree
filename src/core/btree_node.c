@@ -119,8 +119,8 @@ int btree_node_intl_init(
         sizeof(BTreeNode*) * (btree_node_node_size(node) + 1));
     if (children_ptr == NULL)
     {
-        jl_btree_free((*node_ptr)->keys);
-        jl_btree_free((*node_ptr));
+        jl_btree_free(node->keys);
+        jl_btree_free(node);
         return 0;
     }
 
@@ -286,19 +286,56 @@ void btree_node_get_sibs(const BTreeNode* node,
         *rsib_ptr = btree_node_get_child(par, child_idx + 1);
 }
 
-// @brief points `idx_ptr` to the index of the least key ordered after `val`
-size_t find_idx_of_min_key_greater_than_val(BTreeNode* node, BTreeKey key)
+// @brief returns the index of the least key ordered after `val`
+//
+
+size_t find_idx_of_min_key_greater_than_val(
+    BTreeNode* node, BTreeKey key, bool* found)
 {
-    // duh
-    if (btree_node_is_empty(node)) return 0;
+    assert(node != NULL);
 
-    size_t idx = binary_search(
-        btree_node_keys(node), 0, btree_node_curr_size(node), key);
+    // Default: Key was not found
+    *found = false;
 
-    if (btree_node_get_key(node, idx) == key) return 2;
+    if (btree_node_is_empty(node))
+    {
+        // Trivial case (1)
+        return 0;
+    }
+
+    if (btree_node_get_first_key(node) > key)
+    {
+        // Trivial case (2)
+        return 0;
+    }
+
+    if (btree_node_get_last_key(node) < key)
+    {
+        // Avoid a worst case binary search
+        return btree_node_num_keys(node);
+    }
+
+    size_t idx =
+        binary_search(btree_node_keys(node), 0, btree_node_num_keys(node), key);
+
+    // ATP, if `key` is equal to `node->keys[i]` for any `i` (including
+    // `node->num_keys`), then `idx` is equal to `i`.
+
+    if (btree_node_get_key(node, idx) == key)
+    {
+        // TODO: Do we really want to let callers pass in a null pointer for
+        // `found`? Will this make debugging more difficult down the line?
+        if (found != NULL)
+        {
+            *found = true;
+        }
+    }
+
+    // ATP, the key at index `idx` is guaranteed to be < `key` and the key at
+    // index `idx + 1` is guaranteed to be > `key`
 
     // Step onto first index pointing to a value larger than `val`
-    if (btree_node_get_key(node, idx) < key) idx += 1;
+    idx += 1;
 
     return idx;
 }
@@ -315,12 +352,14 @@ void btree_node_insert_key(BTreeNode* node, size_t idx, BTreeKey key)
     if (btree_node_num_keys(node) > 1)
     {
         BTreeKey temp = 0;
-        for (size_t i = idx; i < btree_node_num_keys(node) - 1; i++)
+        for (size_t i = idx; i < last_key_idx(node); i++)
         {
             temp = btree_node_get_key(node, i);
             btree_node_set_key(node, i, btree_node_get_key(node, i + 1));
             btree_node_set_key(node, i + 1, temp);
         }
+
+        // TODO: Redundant?
         btree_node_set_key(node, last_key_idx(node), temp);
     }
     btree_node_set_key(node, idx, key);
@@ -439,9 +478,10 @@ void btree_node_remove_child(BTreeNode* node, size_t idx, BTreeNode** child_ptr)
     }
 
     // Siblings
+    // TODO: Yikes
     BTreeNode* left_sib  = NULL;
     BTreeNode* right_sib = NULL;
-    if (idx > 0 && idx < btree_node_node_size(node))
+    if (idx > 0 && idx < btree_node_num_children(node) - 1)
     {
         left_sib  = btree_node_get_child(node, idx - 1);
         right_sib = btree_node_get_child(node, idx);
@@ -449,13 +489,13 @@ void btree_node_remove_child(BTreeNode* node, size_t idx, BTreeNode** child_ptr)
         btree_node_set_left_sib(right_sib, left_sib);
         btree_node_set_right_sib(left_sib, right_sib);
     }
-    else if (idx > 0 && idx >= btree_node_node_size(node))
+    else if (idx > 0)
     {
         left_sib = btree_node_get_child(node, idx - 1);
 
         btree_node_set_right_sib(left_sib, NULL);
     }
-    else if (idx <= 0 && idx < btree_node_node_size(node))
+    else if (idx < btree_node_num_children(node) - 1)
     {
         right_sib = btree_node_get_child(node, idx);
 
@@ -477,58 +517,6 @@ void btree_node_pop_front_child(BTreeNode* node, BTreeNode** child_ptr)
 void btree_node_pop_back_child(BTreeNode* node, BTreeNode** child_ptr)
 {
     btree_node_remove_child(node, last_child_idx(node), child_ptr);
-}
-
-// @brief Adds a key and child to an internal node.
-//
-// @detaisl If not full, inserts `val` into btree_node_keys(node), shifting
-// anything greater than `val` to the right by one, and inserts `key` into
-// btree_node_children(node) shifting anything "greater" to the right by one.
-//
-// @par Assumptions
-//    - `node` is an inintialized and valid btree internal node
-//    - `node` is not full
-//
-// @param node
-// @param val
-//
-// @return a return code
-//    - 0: Error
-//    - 1: OK
-//    - 2: Value already in the node
-void btree_node_insert_key_and_child_assuming_not_full(
-    BTreeNode* node, const BTreeKey key, BTreeNode* child)
-{
-    size_t idx = find_idx_of_min_key_greater_than_val(node, key);
-
-    if (idx == btree_node_curr_size(node))
-    {
-        btree_node_push_back_key(node, key);
-
-        if (btree_node_is_leaf(node))
-        {
-            log_message("Called insert key and child on a leaf", __LINE__);
-            return;
-        }
-
-        btree_node_push_back_child(node, child);
-    }
-
-    if (idx >= btree_node_curr_size(node))
-    {
-        log_message("Underflow risk", __LINE__);
-        return;
-    }
-
-    btree_node_insert_key(node, idx, key);
-
-    if (btree_node_is_leaf(node))
-    {
-        log_message("Called insert key and child on a leaf", __LINE__);
-        return;
-    }
-
-    btree_node_insert_child(node, idx + 1, child);
 }
 
 void btree_node_copy_key_range(BTreeNode* to,

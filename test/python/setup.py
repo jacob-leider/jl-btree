@@ -13,7 +13,8 @@ if __name__ == "__main__":
     # Set the SDK to an available version
     os.environ['SDKROOT'] = '/Library/Developer/CommandLineTools/SDKs/MacOSX13.3.sdk'
 
-    all_sources = get_btree_core_sources() + ["hello.c"]
+    all_sources = get_btree_core_sources(
+    ) + ["hello.c"]
 
     module = Extension("hello", sources=all_sources)
 
