@@ -9,6 +9,7 @@
 #include <unistd.h>
 
 #include "../src/core/btree.h"
+#include "../src/core/btree_key.h"
 #include "../src/core/btree_node.h"
 #include "../src/utils/btree_print.h"
 #include "../src/utils/printutils.h"
@@ -55,7 +56,9 @@ int btree_node_is_valid_partial(BTreeNode* node, char** err_msg)
 
     for (size_t i = 1; i < btree_node_curr_size(node); i++)
     {
-        if (btree_node_get_key(node, i) < btree_node_get_key(node, i - 1))
+        BTreeKey* k1 = btree_node_get_key(node, i - 1);
+        BTreeKey* k2 = btree_node_get_key(node, i);
+        if (btree_key_lt(k2, k1))
         {
             *err_msg = "unsorted";
             return 0;
@@ -93,7 +96,7 @@ SubtreeSizeTest btree_check_subtree_sizes_impl(BTreeNode* root)
             printf("(child %lu) Expected: %lu, Computed: %lu\n", i + 1,
                 btree_node_subtree_size(child), t.computed_subtree_size);
             printf("Child: ");
-            printArr(child->keys, btree_node_curr_size(child));
+            printNodeKeys(child);
             return t;
         }
         computed_subtree_size += t.computed_subtree_size;
@@ -151,8 +154,7 @@ static void print_path_from_stack_verbose(BTreeCmpState* state)
     size_t num_spaces = 4;
     print_n(state->outp_fp, ' ', num_spaces);
     fprintf(state->outp_fp, "(");
-    fprintArrNoNl(
-        state->outp_fp, btree_node_keys(ptr), btree_node_num_keys(ptr));
+    fprintNodeKeysNoNl(state->outp_fp, ptr);
     fprintf(state->outp_fp, ")");
 
     size_t temp = 0;
@@ -170,8 +172,7 @@ static void print_path_from_stack_verbose(BTreeCmpState* state)
         print_n(state->outp_fp, ' ', num_spaces);
 
         fprintf(state->outp_fp, "└─> (");
-        fprintArrNoNl(
-            state->outp_fp, btree_node_keys(ptr), btree_node_num_keys(ptr));
+        fprintNodeKeysNoNl(state->outp_fp, ptr);
         fprintf(state->outp_fp, ")");
 
         fprintf(state->outp_fp, "    idx = %lu", temp);
@@ -302,12 +303,11 @@ static bool btree_cmp_r_num_children_check(BTreeCmpState* state)
 
         fprintf(state->outp_fp, "(%s) has %lu children:\n\t", state->a_name,
             btree_node_num_children(state->a));
-        fprintArr(state->outp_fp, btree_node_keys(state->a),
-            btree_node_num_keys(state->a));
+        fprintNodeKeys(state->outp_fp, state->a);
+
         fprintf(state->outp_fp, "(%s) has %lu children:\n\t", state->b_name,
             btree_node_num_children(state->b));
-        fprintArr(state->outp_fp, btree_node_keys(state->b),
-            btree_node_num_keys(state->b));
+        fprintNodeKeys(state->outp_fp, state->b);
 
         btree_cmp_print_fail_end();
 
@@ -482,8 +482,16 @@ static int btree_subtree_in_order_traverse_r(BTreeNode* root)
     for (size_t i = 0; i < btree_node_curr_size(root); i++)
     {
         if (!btree_node_is_leaf(root))
-            btree_subtree_in_order_traverse_r(btree_node_get_child(root, i));
-        printf("%d, ", btree_node_get_key(root, i));
+        {
+            BTreeNode* child = btree_node_get_child(root, i);
+            if (!btree_subtree_in_order_traverse_r(child))
+            {
+                return 0;
+            }
+        }
+
+        print_btree_key_from_node(root, i);
+        printf(", ");
     }
 
     if (!btree_node_is_leaf(root))

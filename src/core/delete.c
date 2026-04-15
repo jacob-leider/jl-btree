@@ -44,47 +44,6 @@
 ///
 ////////////////////////////////////////////////////////////////////////////////
 
-// Determines which of `node`'s children is the root of a subtree containg `key`
-static size_t compute_child_idx(BTreeNode* node, BTreeKey key, bool* found_key)
-{
-    size_t child_idx = 0;
-    *found_key       = 0;
-
-    if (btree_node_get_last_key(node) < key)
-    {
-        child_idx = btree_node_num_keys(node);
-    }
-#if REDUNDANT < 1
-    else if (btree_node_get_last_key(node) == key)
-    {
-        *found_key = 1;
-    }
-#endif
-    else if (btree_node_get_first_key(node) > key)
-    {
-        child_idx = 0;
-    }
-    else
-    {
-        child_idx = binary_search(
-            btree_node_keys(node), 0, btree_node_num_keys(node), key);
-#if REDUNDANT < 1
-        if (btree_node_get_key(node, child_idx) == key)
-        {
-            *found_key = 1;
-        }
-        else
-        {
-#endif
-            child_idx += 1;
-#if REDUNDANT < 1
-        }
-#endif
-    }
-
-    return child_idx;
-}
-
 /**
  * @brief Determines whether a node or one of its siblings has more than the
  * minimum number of keys
@@ -114,7 +73,7 @@ static bool btree_node_can_spare_or_borrow_key(
     if (btree_node_is_root(node))
     {
         // Minimum capacity for a root is 1
-        return btree_node_curr_size(node) > 1;
+        return btree_node_num_keys(node) > 1;
     }
 
     // child_idx may have been passed in uninitialized, but only if the node is
@@ -352,7 +311,7 @@ static bool update_vars(BTreeNode* ptr, BTreeNodeDeleteState* state)
             BTreeNode* left_sib =
                 btree_node_get_child(btree_node_par(ptr), last_child_idx - 1);
 
-            child_idx_after_merge = child_idx + btree_node_curr_size(left_sib);
+            child_idx_after_merge = child_idx + btree_node_num_keys(left_sib);
         }
     }
 
@@ -486,7 +445,7 @@ static bool update_vars(BTreeNode* ptr, BTreeNodeDeleteState* state)
  *    - 1: OK
  */
 int btree_node_delete_key(BTreeNode* root,
-    BTreeKey key,
+    BTreeKey* key,
     BTreeNode** last_over_min_cap_anc_ptr,
     size_t* child_hint_cache,
     BTreeNodeSib* merge_hint_cache)
@@ -511,10 +470,15 @@ int btree_node_delete_key(BTreeNode* root,
 
     while (c == NULL && !encountered_leaf)
     {
-        state.child_idx = compute_child_idx(a, key, &found_key);
+        state.child_idx =
+            find_idx_of_min_key_greater_than_val(a, key, &found_key);
 
         if (found_key)
         {
+            // find_idx_of_... steps off of the index of `key`. Correct that
+            // here.
+            state.child_idx -= 1;
+
             c = a;
         }
         else
@@ -545,7 +509,13 @@ int btree_node_delete_key(BTreeNode* root,
 
     while (!btree_node_is_leaf(a))
     {
-        state.child_idx = compute_child_idx(a, key, &found_key);
+        state.child_idx =
+            find_idx_of_min_key_greater_than_val(a, key, &found_key);
+
+        if (found_key)
+        {
+            state.child_idx -= 1;
+        }
 
         // Update subtree sizes, update child index cache, and either merge hint
         // cache or rotate hint
@@ -561,16 +531,14 @@ int btree_node_delete_key(BTreeNode* root,
 
     if (c != a)
     {
-        BTreeKey pred = btree_node_get_last_key(a);
+        BTreeKey* pred = btree_node_get_last_key(a);
 
-#if BTREE_DEBUG_1 != 1
         btree_node_set_key(c, state.child_idx, pred);
-#endif
 
         // Underflow risk. TODO: Should this really be an assert?
-        assert(btree_node_curr_size(a) > 0);
+        assert(btree_node_num_keys(a) > 0);
 
-        state.child_idx = btree_node_curr_size(a) - 1;
+        state.child_idx = btree_node_num_keys(a) - 1;
     }
 
     // Update subtree sizes, update child index cache, and either merge hint
@@ -578,9 +546,7 @@ int btree_node_delete_key(BTreeNode* root,
     if (!update_vars(a, &state)) return 0;
 
     // Remove `pred` or `key` from pred_leaf
-#if BTREE_DEBUG_1 != 1
     btree_node_remove_key(a, state.child_idx, NULL);
-#endif
 
     *last_over_min_cap_anc_ptr = state.last_over_min_cap_anc;
 
@@ -606,7 +572,7 @@ static void btree_node_rotate_left(
 {
     // append pivot and `rsib`'s first child to the back of lsib
     // replace pivot with first key of `rsib`
-    BTreeKey rsib_first_key     = 0;
+    BTreeKey rsib_first_key;
     BTreeNode* rsib_first_child = NULL;
 
     btree_node_pop_front_key(rsib, &rsib_first_key);
@@ -640,7 +606,7 @@ static void btree_node_rotate_left(
             lsib, btree_node_subtree_size(rsib_first_child));
     }
 
-    btree_node_set_key(btree_node_par(lsib), pivot_idx, rsib_first_key);
+    btree_node_set_key(btree_node_par(lsib), pivot_idx, &rsib_first_key);
 }
 
 /**
@@ -655,10 +621,10 @@ static void btree_node_rotate_right(
 {
     // append pivot and `lsib`'s last child to the front of rsib
     // replace pivot with last key of `lsib`
-    BTreeKey lsib_last_val     = 0;
+    BTreeKey lsib_last_key;
     BTreeNode* lsib_last_child = NULL;
 
-    btree_node_pop_back_key(lsib, &lsib_last_val);
+    btree_node_pop_back_key(lsib, &lsib_last_key);
 
     btree_node_push_front_key(
         rsib, btree_node_get_key(btree_node_par(rsib), pivot_idx));
@@ -689,7 +655,7 @@ static void btree_node_rotate_right(
             rsib, btree_node_subtree_size(lsib_last_child));
     }
 
-    btree_node_set_key(btree_node_par(rsib), pivot_idx, lsib_last_val);
+    btree_node_set_key(btree_node_par(rsib), pivot_idx, &lsib_last_key);
 }
 
 /**
@@ -738,7 +704,7 @@ static void btree_node_merge_sibs(
 }
 
 int btree_node_delete_impl(
-    BTreeNode* root, BTreeKey val, BTreeNode** new_root_ptr)
+    BTreeNode* root, BTreeKey* key, BTreeNode** new_root_ptr)
 {
     // Default: root is unchanged
     *new_root_ptr = root;
@@ -750,7 +716,7 @@ int btree_node_delete_impl(
     }
 #endif
 
-    if (!btree_node_contains_key(root, val))
+    if (!btree_node_contains_key(root, key))
     {
         return 2;
     }
@@ -764,7 +730,7 @@ int btree_node_delete_impl(
     BTreeNode* ptr = NULL;
 
     if (!btree_node_delete_key(
-            root, val, &ptr, child_hint_cache_2, merge_hint_cache_2))
+            root, key, &ptr, child_hint_cache_2, merge_hint_cache_2))
     {
         // TODO: Handle appropriately. This could be a few seperate things.
         return 0;
@@ -781,7 +747,7 @@ int btree_node_delete_impl(
 
     if (ptr == NULL)  // TODO: Redundant check for root of the correct form
     {
-        if (btree_node_curr_size(root) > 1)
+        if (btree_node_num_keys(root) > 1)
         {
             // Error: root should only be squashed if it has exactly two
             // children and neither can spare a key

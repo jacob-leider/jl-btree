@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <stdio.h>
 
+#include "./btree_key.h"
 #include "./btree_node.h"
 #include "./btree_settings.h"
 #include "./contains.h"
@@ -12,13 +13,34 @@
 
 // Child index will depend on which half of `ptr` the next ancestor belongs to
 static size_t child_idx_after_split(
-    BTreeNode* ptr, const BTreeKey key, const size_t child_idx)
+    BTreeNode* ptr, BTreeKey* key, const size_t child_idx)
 {
-    const size_t mid = btree_node_node_size(ptr) / 2;
-    if (btree_node_is_full(ptr) && key > btree_node_get_key(ptr, mid))
+    const size_t mid  = btree_node_node_size(ptr) / 2;
+
+    BTreeKey* mid_key = btree_node_get_key(ptr, mid);
+
+    if (btree_node_is_full(ptr) && btree_key_gt(key, mid_key))
+    {
         return child_idx - mid - 1;
+    }
 
     return child_idx;
+}
+
+static bool update_child_hint_cache(
+    size_t* child_hint_cache, size_t* child_hint_cache_index, size_t child_idx)
+{
+    // Your b-tree is COLOSSAL.
+    if (*child_hint_cache_index + 1 == DEFAULT_CHILD_IDX_CACHE_SIZE)
+    {
+        return false;
+    }
+
+    // Push child index onto cache stack
+    child_hint_cache[*child_hint_cache_index] = child_idx;
+    *child_hint_cache_index += 1;
+
+    return true;
 }
 
 static void update_subtree_sizes_upwards(
@@ -31,59 +53,18 @@ static void update_subtree_sizes_upwards(
     }
 }
 
-static size_t compute_child_idx(BTreeNode* node, BTreeKey key, bool* found_key)
-{
-    size_t child_idx = 0;
-    *found_key       = 0;
-
-    if (btree_node_get_last_key(node) < key)
-    {
-        child_idx = btree_node_num_keys(node);
-    }
-#if REDUNDANT < 1
-    else if (btree_node_get_last_key(node) == key)
-    {
-        *found_key = 1;
-    }
-#endif
-    else if (btree_node_get_first_key(node) > key)
-    {
-        child_idx = 0;
-    }
-    else
-    {
-        child_idx = binary_search(
-            btree_node_keys(node), 0, btree_node_num_keys(node), key);
-#if REDUNDANT < 1
-        if (btree_node_get_key(node, child_idx) == key)
-        {
-            *found_key = 1;
-        }
-        else
-        {
-#endif
-            child_idx += 1;
-#if REDUNDANT < 1
-        }
-#endif
-    }
-
-    return child_idx;
-}
-
 bool compute_child_index_and_hint(BTreeNode* ptr,
-    BTreeKey key,
+    BTreeKey* key,
     BTreeNode** last_nonfull_anc_ptr,
     size_t* child_hint_cache,
     size_t* child_hint_cache_index_ptr,
     size_t* child_idx_ptr)
 {
     // Unpack
-    BTreeNode* last_nonfull_anc   = *last_nonfull_anc_ptr;
-    size_t child_hint_cache_index = *child_hint_cache_index_ptr;
-    size_t child_idx              = *child_idx_ptr;
+    BTreeNode* last_nonfull_anc = *last_nonfull_anc_ptr;
+    size_t child_idx            = *child_idx_ptr;
 
-    bool found_key                = false;
+    bool found_key              = false;
 
     // If this node isn't full, its ancestors won't be affected by insertion
     // EXCEPT that their subtree sizes will need to be incremented. Do that
@@ -94,35 +75,32 @@ bool compute_child_index_and_hint(BTreeNode* ptr,
         last_nonfull_anc = ptr;
 
         // Clear the stack
-        child_hint_cache_index = 0;
+        *child_hint_cache_index_ptr = 0;
     }
 
     // Find the next ancestor
     // TODO: Only compute the ``after split" child index if we know this
     // node will be split
-    child_idx = compute_child_idx(ptr, key, &found_key);
+    child_idx = find_idx_of_min_key_greater_than_val(ptr, key, &found_key);
+
     size_t child_idx_after_split_var =
         child_idx_after_split(ptr, key, child_idx);
 
     if (found_key)
     {
-        return 0;
+        return false;
     }
 
     // Your b-tree is COLOSSAL.
-    if (child_hint_cache_index + 1 == DEFAULT_CHILD_IDX_CACHE_SIZE)
+    if (!update_child_hint_cache(child_hint_cache, child_hint_cache_index_ptr,
+            child_idx_after_split_var))
     {
         return false;
     }
 
-    // Push child index onto cache stack
-    child_hint_cache[child_hint_cache_index] = child_idx_after_split_var;
-    child_hint_cache_index += 1;
-
     // Repack
-    *last_nonfull_anc_ptr       = last_nonfull_anc;
-    *child_hint_cache_index_ptr = child_hint_cache_index;
-    *child_idx_ptr              = child_idx;
+    *last_nonfull_anc_ptr = last_nonfull_anc;
+    *child_idx_ptr        = child_idx;
 
     return true;
 }
@@ -157,26 +135,19 @@ bool compute_child_index_and_hint(BTreeNode* ptr,
  *    `key` should be inserted
  */
 bool btree_node_find_closest_nonfull_anc(BTreeNode* root,
-    const BTreeKey key,
+    BTreeKey* key,
     BTreeNode** last_nonfull_anc_ptr,
     size_t* child_hint_cache)
 {
     size_t child_hint_cache_index = 0;
-
-    // Depth in the subtree rooted at last_nonfull_anc. Assume a depth of 1
-    // in case all ancestors are full. Otherwise, depth will be reset to
-    // zero.
     // Always starts at zero because a new root is never split
     size_t child_idx = 0;
 
-    if (child_hint_cache_index + 1 == DEFAULT_CHILD_IDX_CACHE_SIZE)
+    if (!update_child_hint_cache(
+            child_hint_cache, &child_hint_cache_index, child_idx))
     {
-        // TODO: This size should also be a local parameter in case we want to
-        // override it
-        return false;  // OOM
+        return false;
     }
-    child_hint_cache[child_hint_cache_index] = child_idx;
-    child_hint_cache_index += 1;
 
     // We expect the caller to ensure the tree doesn't contain this key, but
     // may handle this case better in the future
@@ -193,20 +164,14 @@ bool btree_node_find_closest_nonfull_anc(BTreeNode* root,
         btree_node_intl_descend(&ptr, child_idx);
     }
 
+    // ATP `ptr` is a leaf. If this leaf contains `key`, the next statement
+    // catches it.
+
     if (!compute_child_index_and_hint(ptr, key, &last_nonfull_anc,
             child_hint_cache, &child_hint_cache_index, &child_idx))
     {
         return false;
     }
-
-#if REDUNDANT < 1
-    // TODO: find_idx... is broken
-    if (key == btree_node_get_key(ptr, binary_search(btree_node_keys(ptr), 0,
-                                           btree_node_num_keys(ptr), key)))
-    {
-        return 0;
-    }
-#endif
 
     *last_nonfull_anc_ptr = last_nonfull_anc;
 
@@ -232,7 +197,8 @@ bool btree_node_find_closest_nonfull_anc(BTreeNode* root,
  *    - 0: Error (OOM)
  *    - 1: OK
  */
-bool btree_node_split(BTreeNode* node, BTreeNode** rsib_ptr, int* next_key_ptr)
+bool btree_node_split(
+    BTreeNode* node, BTreeNode** rsib_ptr, BTreeKey* next_key_ptr)
 {
     const size_t size = btree_node_node_size(node);
     // size of left sibling after the split
@@ -260,7 +226,7 @@ bool btree_node_split(BTreeNode* node, BTreeNode** rsib_ptr, int* next_key_ptr)
         BTreeKey temp;
         btree_node_pop_back_key(node, &temp);
         btree_node_dec_subtree_size_1(node);
-        btree_node_push_back_key(rsib, temp);
+        btree_node_push_back_key(rsib, &temp);
         btree_node_inc_subtree_size_1(rsib);
     }
 
@@ -336,7 +302,7 @@ bool btree_node_split(BTreeNode* node, BTreeNode** rsib_ptr, int* next_key_ptr)
  *    - 2: `val` already exists in the subtree with root `root`
  */
 int btree_node_insert_impl(
-    BTreeNode* root, const BTreeKey key, BTreeNode** new_root_ptr)
+    BTreeNode* root, BTreeKey* key, BTreeNode** new_root_ptr)
 {
     // By default, the root of the tree doesn't change
     *new_root_ptr = root;
@@ -380,7 +346,7 @@ int btree_node_insert_impl(
         // k (B1: lchild, B2: rchild, k: sep_key)
         BTreeNode* b1 = btree_node_get_child(a, child_hint_cache[depth]);
         BTreeNode* b2 = NULL;
-        BTreeKey k    = 0;
+        BTreeKey k;
 
         if (!btree_node_split(b1, &b2, &k))
         {
@@ -399,11 +365,11 @@ int btree_node_insert_impl(
         // The same applies to `b2`. This is getting moved from `b1` to a new
         // node, but its subtree size is added to `a`'s here as if it's a child
         // with new keys.
-        btree_node_insert_key(a, child_hint_cache[depth], k);
+        btree_node_insert_key(a, child_hint_cache[depth], &k);
         btree_node_insert_child(a, child_hint_cache[depth] + 1, b2);
 
         // Descend
-        a = key < k ? b1 : b2;
+        a = btree_key_lt(key, &k) ? b1 : b2;
 
         btree_node_inc_subtree_size_1(a);
 

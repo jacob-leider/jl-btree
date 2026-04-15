@@ -13,6 +13,7 @@
 #include "./core/btree_node.h"
 #include "./printutils.h"
 #include "./stack.h"
+#include "./string_slice.h"
 
 static int max(int a, int b) { return a <= b ? b : a; }
 
@@ -28,7 +29,7 @@ typedef enum TokenType
 typedef struct Token
 {
     TokenType type;
-    BTreeKey val;
+    int val;
     bool is_intl;
 } Token;
 
@@ -37,13 +38,6 @@ typedef struct TokenNode
     Token token;
     struct TokenNode* next;
 } TokenNode;
-
-typedef struct String
-{
-    char* str;
-    size_t len;
-    size_t idx;
-} String;
 
 LexerSettings* default_lexer_settings(void)
 {
@@ -56,136 +50,64 @@ LexerSettings* default_lexer_settings(void)
     return &settings;
 }
 
-static int str_inc_size(String* s, int bytes)
-{
-    if (!s->str)
-    {
-        s->len = bytes;
-        s->str = (char*)malloc(s->len * sizeof(char));
-    }
-    else
-    {
-        s->len += bytes;
-        s->str = (char*)realloc(s->str, s->len * sizeof(char));
-    }
-
-    return s->str != NULL;
-}
-
-static int str_append(String* s, char* other, int bytes)
-{
-    if (!str_inc_size(s, bytes)) return 0;
-    memcpy(s->str + s->idx, other, bytes);
-    s->idx += bytes;
-    return 1;
-}
-
-static int str_append_space(String* s) { return str_append(s, " ", 1); }
-
-static int str_append_int(String* s, int n)
-{
-    char buff[10];
-    memset(buff, '\0', 10 * sizeof(char));
-    sprintf(buff, "%d", n);
-    return str_append(s, buff, strlen(buff));
-}
+/************************************************************************/
+/*                             SERIALIZE                                */
+/************************************************************************/
 
 // Helper for `StrFromTree`
-static int StrFromTreeR(BTreeNode* root, String* string)
+static int StrFromTreeR(BTreeNode* root, StringBuilder* string)
 {
-    if (!str_append(string, "(", 1)) return 0;
+    if (!string_builder_append_willy_nilly(string, "(")) return 0;
 
-    for (size_t i = 0; i < btree_node_curr_size(root); i++)
+    for (size_t i = 0; i < btree_node_num_keys(root); i++)
     {
         if (!btree_node_is_leaf(root))
         {
             BTreeNode* child = btree_node_get_child(root, i);
-            if (child == NULL)
+
+            assert(child != NULL);
+
+            if (!StrFromTreeR(child, string))
             {
-                printf("SERIALIZATION ERROR\n");
-                printf("child %lu of current node is null. Current node:\n", i);
-                btree_node_print(root);
-
-                for (size_t j = i + 1; j <= btree_node_curr_size(root); j++)
-                {
-                    BTreeNode* sib = btree_node_get_child(root, j);
-                    if (sib == NULL)
-                    {
-                        printf(" -- Also null: child %lu\n", j);
-                    }
-                    else
-                    {
-                        printf(" -- Child %lu is NOT null: ", j);
-                        printArr(sib->keys, btree_node_curr_size(sib));
-                    }
-                }
-
                 return 0;
             }
 
-            if (!StrFromTreeR(child, string)) return 0;
-
-            if (btree_node_get_child(root, i) != NULL &&
-                !str_append_space(string))
-                return 0;
-        }
-
-        if (!str_append_int(string, btree_node_get_key(root, i))) return 0;
-
-        if (!btree_node_is_leaf(root))
-        {
-            BTreeNode* child = btree_node_get_child(root, i + 1);
-            if (child == NULL)
+            if (!string_builder_append_willy_nilly(string, " "))
             {
-                if (child == NULL)
-                {
-                    printf("SERIALIZATION ERROR\n");
-                    printf("child %lu of current node is null. Current node:\n",
-                        i + 1);
-                    btree_node_print(root);
-
-                    for (size_t j = i + 2; j <= btree_node_curr_size(root); j++)
-                    {
-                        BTreeNode* sib = btree_node_get_child(root, j);
-                        if (sib == NULL)
-                        {
-                            printf(" -- Also null: child %lu\n", j);
-                        }
-                        else
-                        {
-                            printf(" -- Child %lu is NOT null: ", j);
-                            printArr(sib->keys, btree_node_curr_size(sib));
-                        }
-                    }
-                    return 0;
-                }
+                return 0;
             }
         }
 
-        if (i < btree_node_curr_size(root) - 1 || !btree_node_is_leaf(root))
+        // Extract integer from key
+        BTreeKey* key_to_append = btree_node_get_key(root, i);
+        int val_to_append       = 0;
+        assert(key_to_append->size == sizeof(int));
+        memcpy(&val_to_append, key_to_append->data, sizeof(int));
+
+        if (!string_builder_append_int(string, val_to_append))
         {
-            if (!str_append_space(string)) return 0;
+            return 0;
+        }
+
+        if (i < btree_node_num_keys(root) - 1 || !btree_node_is_leaf(root))
+        {
+            if (!string_builder_append_willy_nilly(string, " "))
+            {
+                return 0;
+            }
         }
     }
 
     if (!btree_node_is_leaf(root))
     {
         BTreeNode* child = btree_node_get_last_child(root);
-        if (child == NULL)
-        {
-            if (child == NULL)
-            {
-                printf("SERIALIZATION ERROR\n");
-                printf("child %lu of current node is null. Current node:\n",
-                    btree_node_curr_size(root));
-                btree_node_print(root);
-                return 0;
-            }
-        }
+
+        assert(child != NULL);
+
         if (!StrFromTreeR(child, string)) return 0;
     }
 
-    if (!str_append(string, ")", 1)) return 0;
+    if (!string_builder_append_willy_nilly(string, ")")) return 0;
 
     return 1;
 }
@@ -199,15 +121,32 @@ static int StrFromTreeR(BTreeNode* root, String* string)
  */
 char* StrFromTree(BTree* tree)
 {
-    BTreeNode* root = tree->root;
+    BTreeNode* root  = tree->root;
 
-    String s        = {NULL, 0, 0};
-    if (!StrFromTreeR(root, &s))
+    StringBuilder* s = string_builder_new();
+
+    if (s == NULL)
+    {
+        return NULL;
+    }
+
+    if (!StrFromTreeR(root, s))
     {
         printf("failed to serialize tree\n");
+
+        return NULL;
     }
-    return s.str;
+
+    char* out = string_builder_to_c_string(s);
+
+    string_builder_kill(s);
+
+    return out;
 }
+
+/************************************************************************/
+/*                            DESERIALIZE                               */
+/************************************************************************/
 
 /**
  * @brief Prepare a string for tokenization by validating it and determining how
@@ -497,7 +436,7 @@ bool ProvideParseContext(Token* tok_seq,
         return false;
     }
 
-    BTreeKey last_key      = INT_MIN;
+    int last_val           = INT_MIN;
 
     bool enforce_key_order = settings->lexer_settings->enforce_key_order;
 
@@ -534,8 +473,8 @@ bool ProvideParseContext(Token* tok_seq,
         else if (tok->type == NUMBER)
         {
             // Nothing to do for now.
-            BTreeKey key = tok->val;
-            if (enforce_key_order && key < last_key)
+            int val = tok->val;
+            if (enforce_key_order && val < last_val)
             {
                 *err_msg_ptr = "Invalid key order";
                 return false;
@@ -626,26 +565,33 @@ int TreeFromStr(const char* str,
 
         if (type == LPAREN)
         {
+            // Step down
             assert(!btree_node_is_leaf(ptr));
 
             BTreeNode* child;
+
             if (!btree_node_init(settings->node_size, &child, is_intl))
+            {
                 return 0;
+            }
 
             btree_node_set_par(child, ptr);
 
             if (btree_node_num_children(ptr) > 0)
             {
                 BTreeNode* lsib = btree_node_get_last_child(ptr);
+
                 btree_node_set_left_sib(child, lsib);
                 btree_node_set_right_sib(lsib, child);
             }
 
             btree_node_push_back_child(ptr, child);
+
             ptr = child;
         }
         else if (type == RPAREN)
         {
+            // Step up
             if (btree_node_is_root(ptr))
             {
                 printf(
@@ -661,18 +607,29 @@ int TreeFromStr(const char* str,
         }
         else if (type == NUMBER)
         {
+            // Add key
             if (btree_node_is_full(ptr))
             {
                 printf("Deserialization error. Details:\n\t- Overfull node\n");
+
                 return 0;
             }
 
-            btree_node_push_back_key(ptr, val);
+            // TODO: KEY HANDLING
+            BTreeKey key = {
+                .data = (char*)&val,
+                .size = sizeof(int),
+            };
+
+            btree_node_push_back_key(ptr, &key);
+            // TODO: KEY HANDLING
+
             btree_node_inc_subtree_size_1(ptr);
         }
         else
         {
             // Probably fine
+            // TODO: No???
         }
     }
 

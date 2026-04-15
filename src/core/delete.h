@@ -14,6 +14,6 @@ typedef enum BTreeNodeSib
 } BTreeNodeSib;
 
 int btree_node_delete_impl(
-    BTreeNode* root, BTreeKey key, BTreeNode** new_root_ptr);
+    BTreeNode* root, BTreeKey* key, BTreeNode** new_root_ptr);
 
 #endif

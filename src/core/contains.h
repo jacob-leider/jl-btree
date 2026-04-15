@@ -3,6 +3,6 @@
 
 #include "btree_node.h"
 
-int btree_node_contains_key(BTreeNode* root, int key);
+int btree_node_contains_key(BTreeNode* root, BTreeKey* key);
 
 #endif

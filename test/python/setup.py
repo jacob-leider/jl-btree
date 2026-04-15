@@ -1,4 +1,8 @@
+#!/usr/bin/env python3
+
 # pip3 install --upgrade setuptools wheel
+
+# See https://docs.python.org/3/extending/newtypes_tutorial.html
 
 from setuptools import setup, Extension
 import os

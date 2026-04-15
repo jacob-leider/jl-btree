@@ -164,25 +164,36 @@ int TestBTreeInsertCase(int* test_num,
         return 1;
     }
 #endif
-    // InsertTestCase test_case;
-    // BuildInsertTestCase(&test_case, 1);
-
     DeserializationSettings settings = {
         .node_size = node_size, .lexer_settings = NULL};
 
-    // Deserialize
-    BTree *computed_tree, *exp_tree;
-    if (!TreeFromStr(
-            before_str, strlen(before_str), &settings, &computed_tree) ||
-        !TreeFromStr(
-            exp_after_str, strlen(exp_after_str), &settings, &exp_tree))
+    // =====================
+    // Deserialize test data
+    // =====================
+
+    BTree* computed_tree = NULL;
+    if (!TreeFromStr(before_str, strlen(before_str), &settings, &computed_tree))
+    {
         return 0;
+    }
+
+    BTree* exp_tree = NULL;
+    if (!TreeFromStr(
+            exp_after_str, strlen(exp_after_str), &settings, &exp_tree))
+    {
+        return 0;
+    }
 
     // =======================
     // Return code comparision
     // =======================
 
-    int rc = btree_insert(computed_tree, val);
+    BTreeKey key = {
+        .data = (char*)&val,
+        .size = sizeof(int),
+    };
+
+    int rc = btree_insert(computed_tree, &key);
 
     if (rc != exp_rc)
     {
@@ -502,13 +513,30 @@ int TestBTreeDeleteCase(int* test_num,
     DeserializationSettings settings = {
         .node_size = node_size, .lexer_settings = NULL};
 
+    // =====================
+    // Deserialize test data
+    // =====================
+
     if (!TreeFromStr(before_str, strlen(before_str), &settings, &computed_tree))
+    {
         return 0;
+    }
 
     if (!TreeFromStr(after_str, strlen(after_str), &settings, &exp_tree))
+    {
         return 0;
+    }
 
-    int rc = btree_delete(computed_tree, val);
+    // ======================
+    // Return code comparison
+    // ======================
+
+    BTreeKey key = {
+        .data = (char*)&val,
+        .size = sizeof(int),
+    };
+
+    int rc = btree_delete(computed_tree, &key);
 
     if (rc != exp_rc)
     {

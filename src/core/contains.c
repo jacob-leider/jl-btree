@@ -1,6 +1,7 @@
 
 #include "contains.h"
 
+#include "./btree_key.h"
 #include "search.h"
 
 /** @brief Determine whether a descendent of `root` contains the key `key`
@@ -12,43 +13,30 @@
  *     - 0: tree doesn't contain `key`
  *     - 1: tree contains `key`
  */
-int btree_node_contains_key(BTreeNode* root, int key)
+int btree_node_contains_key(BTreeNode* root, BTreeKey* key)
 {
-    BTreeNode* ptr = root;
-    int child_idx  = 0;
+    BTreeNode* ptr   = root;
+
+    size_t child_idx = 0;
+    bool found       = false;
+    bool ptr_is_leaf = false;
 
     // Search for a node containing `key`
-    while (!btree_node_is_leaf(ptr))
+    while (!found && !ptr_is_leaf)
     {
-        if (btree_node_get_key(ptr, btree_node_curr_size(ptr) - 1) < key)
+        child_idx = find_idx_of_min_key_greater_than_val(ptr, key, &found);
+
+        if (btree_node_is_leaf(ptr))
         {
-            child_idx = btree_node_curr_size(ptr);
-        }
-        else if (btree_node_get_key(ptr, btree_node_curr_size(ptr) - 1) == key)
-        {
-            return 1;
-        }
-        else if (btree_node_get_key(ptr, 0) > key)
-        {
-            child_idx = 0;
+            ptr_is_leaf = true;
         }
         else
         {
-            child_idx =
-                binary_search(ptr->keys, 0, btree_node_curr_size(ptr), key);
-            if (btree_node_get_key(ptr, child_idx) == key) return 1;
-            child_idx += 1;
+            btree_node_intl_descend(&ptr, child_idx);
         }
-
-        btree_node_intl_descend(&ptr, child_idx);
     }
 
     // Check if the leaf contains `key`
-    if (btree_node_get_key(ptr,
-            binary_search(ptr->keys, 0, btree_node_curr_size(ptr), key)) == key)
-    {
-        return 1;
-    }
 
-    return 0;
+    return found;
 }

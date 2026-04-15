@@ -4,11 +4,11 @@
 #include <stdbool.h>
 #include <stddef.h>
 
+#include "./btree_key.h"
 #include "./btree_settings.h"
 
 // Dumb c nonsense.
 typedef struct BTreeNode BTreeNode;
-typedef int BTreeKey;
 
 struct BTreeNode
 {
@@ -153,23 +153,23 @@ void btree_node_get_sibs(const BTreeNode* node,
 void btree_node_intl_descend(BTreeNode** node, size_t idx);
 
 size_t find_idx_of_min_key_greater_than_val(
-    BTreeNode* node, BTreeKey val, bool* found);
+    BTreeNode* node, BTreeKey* key, bool* found);
 
 // Accessors
 
 // Get key
-BTreeKey btree_node_get_key(BTreeNode* node, size_t idx);
+BTreeKey* btree_node_get_key(BTreeNode* node, size_t idx);
 
-BTreeKey btree_node_get_first_key(BTreeNode* node);
+BTreeKey* btree_node_get_first_key(BTreeNode* node);
 
-BTreeKey btree_node_get_last_key(BTreeNode* node);
+BTreeKey* btree_node_get_last_key(BTreeNode* node);
 
 // Set key
-void btree_node_set_key(BTreeNode* node, size_t idx, BTreeKey key);
+void btree_node_set_key(BTreeNode* node, size_t idx, BTreeKey* key);
 
-void btree_node_set_first_key(BTreeNode* node, BTreeKey key);
+void btree_node_set_first_key(BTreeNode* node, BTreeKey* key);
 
-void btree_node_set_last_key(BTreeNode* node, BTreeKey key);
+void btree_node_set_last_key(BTreeNode* node, BTreeKey* key);
 
 // Get child
 BTreeNode* btree_node_get_child(BTreeNode* node, size_t idx);
@@ -186,11 +186,11 @@ void btree_node_set_first_child(BTreeNode* node, BTreeNode* child);
 void btree_node_set_last_child(BTreeNode* node, BTreeNode* child);
 
 // Insert key
-void btree_node_insert_key(BTreeNode* node, size_t idx, BTreeKey key);
+void btree_node_insert_key(BTreeNode* node, size_t idx, BTreeKey* key);
 
-void btree_node_push_front_key(BTreeNode* node, BTreeKey key);
+void btree_node_push_front_key(BTreeNode* node, BTreeKey* key);
 
-void btree_node_push_back_key(BTreeNode* node, BTreeKey key);
+void btree_node_push_back_key(BTreeNode* node, BTreeKey* key);
 
 // Remove key
 void btree_node_remove_key(BTreeNode* node, size_t idx, BTreeKey* key_ptr);

@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "./btree_key.h"
 #include "./btree_settings.h"
 #include "./mem.h"
 #include "./search.h"
@@ -165,11 +166,13 @@ void btree_node_kill(BTreeNode* node)
 
 // Storage routine
 
-void btree_node_write_key(BTreeNode* node, size_t idx, BTreeKey key)
+void btree_node_write_key(BTreeNode* node, size_t idx, BTreeKey* key)
 {
     assert(idx < btree_node_node_size(node));
 
-    btree_node_keys(node)[idx] = key;
+    // Should work?
+    // TODO: Confirm
+    memcpy(btree_node_keys(node) + idx, key, sizeof(BTreeKey));
 }
 
 /************************************************************/
@@ -181,36 +184,36 @@ static size_t last_key_idx(BTreeNode* node)
     return btree_node_num_keys(node) - 1;
 }
 
-int btree_node_get_key(BTreeNode* node, size_t idx)
+BTreeKey* btree_node_get_key(BTreeNode* node, size_t idx)
 {
-    return btree_node_keys(node)[idx];
+    return btree_node_keys(node) + idx;
 }
 
-int btree_node_get_first_key(BTreeNode* node)
+BTreeKey* btree_node_get_first_key(BTreeNode* node)
 {
     assert(btree_node_num_keys(node) > 0);
 
     return btree_node_get_key(node, 0);
 }
 
-int btree_node_get_last_key(BTreeNode* node)
+BTreeKey* btree_node_get_last_key(BTreeNode* node)
 {
     assert(btree_node_num_keys(node) > 0);
 
     return btree_node_get_key(node, last_key_idx(node));
 }
 
-void btree_node_set_key(BTreeNode* node, size_t idx, BTreeKey key)
+void btree_node_set_key(BTreeNode* node, size_t idx, BTreeKey* key)
 {
     btree_node_write_key(node, idx, key);
 }
 
-void btree_node_set_first_key(BTreeNode* node, BTreeKey key)
+void btree_node_set_first_key(BTreeNode* node, BTreeKey* key)
 {
     btree_node_set_key(node, 0, key);
 }
 
-void btree_node_set_last_key(BTreeNode* node, BTreeKey key)
+void btree_node_set_last_key(BTreeNode* node, BTreeKey* key)
 {
     btree_node_set_key(node, last_key_idx(node), key);
 }
@@ -285,18 +288,39 @@ void btree_node_get_sibs(const BTreeNode* node,
         printf("Error. Underflow risk in %s at line %d.\n", __FILE__, __LINE__);
     }
 
-    if (child_idx > 0) *lsib_ptr = btree_node_get_child(par, child_idx - 1);
+    if (child_idx > 0)
+    {
+        *lsib_ptr = btree_node_get_child(par, child_idx - 1);
+    }
+
     if (child_idx + 1 <= btree_node_curr_size(par))
+    {
         *rsib_ptr = btree_node_get_child(par, child_idx + 1);
+    }
 }
 
-// @brief returns the index of the least key ordered after `val`
-//
+int BTreeKey_cmp_wrapper(char* a, char* b)
+{
+    return btree_key_cmp((BTreeKey*)a, (BTreeKey*)b);
+}
 
+/**
+ * @brief Computes the index of the least key in `node` ordered strictly after
+ * `key`, and determine whether `node` contains `key`
+ *
+ * @param[in] node A btree node
+ * @param[in] key A btree key
+ * @param[out] found A boolean indicating whether `node` contains `key`
+ *
+ * @return Index of the least key in `node` ordered strictly after
+ * `key`
+ */
 size_t find_idx_of_min_key_greater_than_val(
-    BTreeNode* node, BTreeKey key, bool* found)
+    BTreeNode* node, BTreeKey* key, bool* found)
 {
     assert(node != NULL);
+
+    size_t num_keys = btree_node_num_keys(node);
 
     // Default: Key was not found
     *found = false;
@@ -307,25 +331,36 @@ size_t find_idx_of_min_key_greater_than_val(
         return 0;
     }
 
-    if (btree_node_get_first_key(node) > key)
+    /******************************************************************/
+    /*           The range of `node` DOES NOT contain `key`           */
+    /******************************************************************/
+
+    BTreeKey* first_key = btree_node_get_first_key(node);
+    if (btree_key_lt(key, first_key))
     {
-        // Trivial case (2)
+        // Less than minimum
         return 0;
     }
 
-    if (btree_node_get_last_key(node) < key)
+    BTreeKey* last_key = btree_node_get_last_key(node);
+    if (btree_key_gt(key, last_key))
     {
-        // Avoid a worst case binary search
-        return btree_node_num_keys(node);
+        // Greater than maximum
+        return num_keys;
     }
 
-    size_t idx =
-        binary_search(btree_node_keys(node), 0, btree_node_num_keys(node), key);
+    /******************************************************************/
+    /*             The range of `node` DOES contain `key`             */
+    /******************************************************************/
+
+    size_t idx = binary_search_2((char*)btree_node_keys(node), 0, num_keys,
+        (char*)key, sizeof(BTreeKey), BTreeKey_cmp_wrapper);
 
     // ATP, if `key` is equal to `node->keys[i]` for any `i` (including
-    // `node->num_keys`), then `idx` is equal to `i`.
+    // `node->num_keys - 1`), then `idx` is equal to `i`.
 
-    if (btree_node_get_key(node, idx) == key)
+    BTreeKey* closest_key = btree_node_get_key(node, idx);
+    if (btree_key_eq(key, closest_key))
     {
         // TODO: Do we really want to let callers pass in a null pointer for
         // `found`? Will this make debugging more difficult down the line?
@@ -346,7 +381,7 @@ size_t find_idx_of_min_key_greater_than_val(
 
 /// PUSH/POP PRIMITIVES: btree_node_(pop|push)_(front|back)_(key|child)
 
-void btree_node_insert_key(BTreeNode* node, size_t idx, BTreeKey key)
+void btree_node_insert_key(BTreeNode* node, size_t idx, BTreeKey* key)
 {
     assert(node != NULL);
     assert(btree_node_num_keys(node) < btree_node_node_size(node));
@@ -355,27 +390,30 @@ void btree_node_insert_key(BTreeNode* node, size_t idx, BTreeKey key)
     btree_node_inc_num_keys_1(node);
     if (btree_node_num_keys(node) > 1)
     {
-        BTreeKey temp = 0;
+        BTreeKey* temp = NULL;
         for (size_t i = idx; i < last_key_idx(node); i++)
         {
-            temp = btree_node_get_key(node, i);
-            btree_node_set_key(node, i, btree_node_get_key(node, i + 1));
+            temp               = btree_node_get_key(node, i);
+            BTreeKey* next_key = btree_node_get_key(node, i + 1);
+
+            btree_node_set_key(node, i, next_key);
             btree_node_set_key(node, i + 1, temp);
         }
 
         // TODO: Redundant?
         btree_node_set_key(node, last_key_idx(node), temp);
     }
+
     btree_node_set_key(node, idx, key);
 }
 
-void btree_node_push_front_key(BTreeNode* node, BTreeKey key)
+void btree_node_push_front_key(BTreeNode* node, BTreeKey* key)
 {
     // Validate: Can't be full already
     btree_node_insert_key(node, 0, key);
 }
 
-void btree_node_push_back_key(BTreeNode* node, BTreeKey key)
+void btree_node_push_back_key(BTreeNode* node, BTreeKey* key)
 {
     // Validate: Can't be full already
     btree_node_insert_key(node, btree_node_num_keys(node), key);
@@ -392,7 +430,8 @@ void btree_node_remove_key(BTreeNode* node, size_t idx, BTreeKey* key_ptr)
 
     if (key_ptr != NULL)
     {
-        *key_ptr = btree_node_get_key(node, idx);
+        BTreeKey* key_at_idx = btree_node_get_key(node, idx);
+        memcpy(key_ptr, key_at_idx, sizeof(BTreeKey));
     }
 
     for (size_t i = idx + 1; i < btree_node_num_keys(node); i++)
@@ -401,7 +440,7 @@ void btree_node_remove_key(BTreeNode* node, size_t idx, BTreeKey* key_ptr)
     }
 
 #ifdef BTREE_KEEP_UNUSED_MEM_CLEAN
-    btree_node_set_last_key(node, 0);
+    // TODO: Clear last key
 #endif
 
     btree_node_dec_num_keys_1(node);
@@ -439,17 +478,31 @@ void btree_node_insert_child(BTreeNode* node, size_t idx, BTreeNode* child)
     {
         // Siblings
         BTreeNode* old_first_child = btree_node_get_child(node, idx - 1);
+
         if (old_first_child != NULL)
+        {
             btree_node_set_left_sib(old_first_child, child);
-        if (child != NULL) btree_node_set_right_sib(child, old_first_child);
+        }
+
+        if (child != NULL)
+        {
+            btree_node_set_right_sib(child, old_first_child);
+        }
     }
     if (idx < btree_node_num_children(node) - 1)
     {
         // Siblings
         BTreeNode* old_last_child = btree_node_get_child(node, idx + 1);
+
         if (old_last_child != NULL)
+        {
             btree_node_set_right_sib(old_last_child, child);
-        if (child != NULL) btree_node_set_left_sib(child, old_last_child);
+        }
+
+        if (child != NULL)
+        {
+            btree_node_set_left_sib(child, old_last_child);
+        }
     }
 }
 

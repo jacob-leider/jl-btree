@@ -6,6 +6,6 @@
 typedef struct BTreeNode BTreeNode;
 
 int btree_node_insert_impl(
-    BTreeNode* root, const BTreeKey key, BTreeNode** new_root_ptr);
+    BTreeNode* root, BTreeKey* key, BTreeNode** new_root_ptr);
 
 #endif

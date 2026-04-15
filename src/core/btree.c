@@ -118,7 +118,7 @@ BTree* btree_init(size_t order)
 // INSERTION                                                                  //
 ////////////////////////////////////////////////////////////////////////////////
 
-int btree_insert(BTree* tree, BTreeKey key)
+int btree_insert(BTree* tree, BTreeKey* key)
 {
     BTreeNode* new_root = NULL;
     int res             = btree_node_insert_impl(tree->root, key, &new_root);
@@ -133,7 +133,7 @@ int btree_insert(BTree* tree, BTreeKey key)
 // Implemented in "delete.h"
 // TODO: This is where the API will be for delete
 
-int btree_delete(BTree* tree, BTreeKey key)
+int btree_delete(BTree* tree, BTreeKey* key)
 {
     BTreeNode* new_root = NULL;
     int res             = btree_node_delete_impl(tree->root, key, &new_root);

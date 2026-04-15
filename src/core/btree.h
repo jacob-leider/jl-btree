@@ -14,9 +14,9 @@ typedef struct BTree
     BTreeNode* root;
 } BTree;
 
-int btree_insert(BTree* tree, BTreeKey key);
+int btree_insert(BTree* tree, BTreeKey* key);
 
-int btree_delete(BTree* tree, BTreeKey key);
+int btree_delete(BTree* tree, BTreeKey* key);
 
 void btree_kill(BTree* tree);
 
