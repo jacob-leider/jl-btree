@@ -4,6 +4,8 @@ b-trees!
 # Use
 This is currently under development. There are several makefiles throughout that build a few different testing targets. There are also a collection of python bindings underway that will hopefully make testing easier.
 
+The entire b-tree implementation lives in src/core. Everything else is for testing, debugging, etc.
+
 # Purpose
 This project exists mostly for my own educational benifit. For the most part, I have not, and plan not to read any information about B-trees or their implementations beyond this [wikipedia page](https://en.wikipedia.org/wiki/B-tree).
 
