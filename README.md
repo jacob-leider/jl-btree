@@ -16,6 +16,9 @@ Things I'm Actively Working On:
   - [ ] Replace functionality that assumes data-slices as integers
     - [ ] Serialization/deserialization
 - Support callers choosing between various insertion/deletion algorithms
+  - [x] lazy top-down insertion/deletion
+  - [ ] lazy bottom-up insertion/deletion
+  - [ ] non-lazy top-down insertion/deletion (split/merge nodes that are full/at min capacity)
 
 Things I Plan to Implement:
 - subtree-level locking scheme in order to provide a safe framework for writing multithreaded b-tree operations
