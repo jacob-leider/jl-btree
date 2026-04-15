@@ -166,13 +166,31 @@ void btree_node_kill(BTreeNode* node)
 
 // Storage routine
 
-void btree_node_write_key(BTreeNode* node, size_t idx, BTreeKey* key)
+bool btree_node_write_key(BTreeNode* node, size_t idx, BTreeKey* key)
 {
     assert(idx < btree_node_node_size(node));
 
+    char* data     = key->data;
+    char* new_data = (char*)jl_btree_malloc(key->size * sizeof(char));
+
+    if (new_data == NULL)
+    {
+        return false;
+    }
+
+    memcpy(new_data, data, key->size * sizeof(char));
+
+    BTreeKey new_key = {
+        .data = new_data,
+        .size = key->size,
+    };
+
     // Should work?
     // TODO: Confirm
-    memcpy(btree_node_keys(node) + idx, key, sizeof(BTreeKey));
+    // Nope!
+    memcpy(btree_node_keys(node) + idx, &new_key, sizeof(BTreeKey));
+
+    return true;
 }
 
 /************************************************************/
@@ -399,9 +417,6 @@ void btree_node_insert_key(BTreeNode* node, size_t idx, BTreeKey* key)
             btree_node_set_key(node, i, next_key);
             btree_node_set_key(node, i + 1, temp);
         }
-
-        // TODO: Redundant?
-        btree_node_set_key(node, last_key_idx(node), temp);
     }
 
     btree_node_set_key(node, idx, key);

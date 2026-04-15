@@ -198,7 +198,8 @@ int TestBTreeInsertCase(int* test_num,
     if (rc != exp_rc)
     {
         PrintFailureReason(*test_num, "return code", test_name);
-        printf("exp rc: %d, rc: %d\n", exp_rc, rc);
+        printf("Expected return code: %d\n", exp_rc);
+        printf("Computed return code: %d\n", rc);
         return 1;
     }
 
@@ -541,7 +542,8 @@ int TestBTreeDeleteCase(int* test_num,
     if (rc != exp_rc)
     {
         PrintFailureReason(*test_num, "return code", test_name);
-        printf("exp rc: %d, rc: %d\n", exp_rc, rc);
+        printf("Expected return code: %d\n", exp_rc);
+        printf("Computed return code: %d\n", rc);
         return 1;
     }
 

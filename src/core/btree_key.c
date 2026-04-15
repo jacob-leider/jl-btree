@@ -11,7 +11,7 @@ int btree_key_cmp(BTreeKey* a, BTreeKey* b)
     int b_int = 0;
     memcpy(&b_int, b->data, sizeof(int));
 
-    return a - b;
+    return a_int - b_int;
 }
 
 int btree_key_lt(BTreeKey* a, BTreeKey* b) { return btree_key_cmp(a, b) < 0; }
