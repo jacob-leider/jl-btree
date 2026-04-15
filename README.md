@@ -12,6 +12,10 @@ Things I'm Actively Working On:
 - Support custom key types
   - [x] Consolidate key comparison logic to ease this transition
   - [x] Replace integer keys with data-slice structs
+  - [ ] Support user-defined operations on keys
+    - [ ] comparators
+    - [ ] string representation
+    - [ ] serializers (serializors?)
   - [ ] Create python bindings for custom key types
   - [ ] Replace functionality that assumes data-slices as integers
     - [ ] Serialization/deserialization
