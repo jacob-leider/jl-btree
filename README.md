@@ -10,6 +10,9 @@ This project exists mostly for my own educational benifit. For the most part, I 
 # Contribution
 Things I'm Actively Working On:
 - Allowing for custom key types
+  - [x] Consolidate key comparison logic to ease this transition
+  - [x] Replace integer keys with data-slice structs
+  - [ ] Create python bindings for custom key types
 - Letting callers choose between various insertion/deletion algorithms
 - Efficient b-tree serialization/deserialization
 
