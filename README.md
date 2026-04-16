@@ -52,6 +52,15 @@ Things I'm Actively Working On:
     - [x] Implement lazy topdown deletion
     - [ ] Implement nonlazy topdown deletion
     - [ ] Implement bottom-up deletion
+-  Documentation
+  - [ ] Write documentation for insertion algorithms
+    - [ ] Lazy topdown
+    - [ ] Non-lazy topdown
+    - [ ] Bottom up
+  - [ ] Write documentation for deletion algorithms
+    - [ ] Lazy topdown
+    - [ ] Non-lazy topdown
+    - [ ] Bottom up
 
 Things I Plan to Implement:
 - subtree-level locking scheme in order to provide a safe framework for writing multithreaded b-tree operations
