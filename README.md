@@ -14,7 +14,19 @@ This project exists mostly for my own educational benifit. For the most part, I 
 
 ## Insertion
 
+### Topdown (lazy)
+
+### Topdown (non-lazy)
+
+### Bottom up
+
 ## Deletion
+
+### Topdown (lazy)
+
+### Topdown (non-lazy)
+
+### Bottom up
 
 # Contribution
 Things I'm Actively Working On:
