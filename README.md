@@ -29,7 +29,9 @@ This project exists mostly for my own educational benifit. For the most part, I 
 ### Bottom up
 
 # Contribution
-Things I'm Actively Working On:
+
+## Things I'm Actively Working On:
+
 - Support custom key types
   - [x] Consolidate key comparison logic to ease this transition
   - [x] Replace integer keys with data-slice structs
@@ -62,6 +64,7 @@ Things I'm Actively Working On:
     - [ ] Non-lazy topdown
     - [ ] Bottom up
 
-Things I Plan to Implement:
+## Things I Plan to Implement:
+
 - subtree-level locking scheme in order to provide a safe framework for writing multithreaded b-tree operations
 - platform-independent paging scheme so b-trees can interact more directly with persistent memory
