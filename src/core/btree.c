@@ -118,11 +118,12 @@ BTree* btree_init(size_t order)
 // INSERTION                                                                  //
 ////////////////////////////////////////////////////////////////////////////////
 
-int btree_insert(BTree* tree, BTreeKey* key)
+int btree_insert(
+    BTree* tree, BTreeKey* key, BTreeInsertionAlgorithm alg, char** err_msg)
 {
     BTreeNode* new_root = NULL;
-    int res             = btree_node_insert_impl(tree->root, key, &new_root);
-    tree->root          = new_root;
+    int res = btree_node_insert_impl(tree->root, key, &new_root, alg, err_msg);
+    tree->root = new_root;
     return res;
 }
 

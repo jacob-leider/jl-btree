@@ -11,7 +11,17 @@
 #include "./mem.h"
 #include "./search.h"
 
-// Child index will depend on which half of `ptr` the next ancestor belongs to
+/**
+ * @brief [TODO:description]
+ *
+ * @note Child index will depend on which half of `ptr` the next ancestor
+ * belongs to
+ *
+ * @param ptr [TODO:parameter]
+ * @param key [TODO:parameter]
+ * @param child_idx [TODO:parameter]
+ * @return [TODO:return]
+ */
 static size_t child_idx_after_split(
     BTreeNode* ptr, BTreeKey* key, const size_t child_idx)
 {
@@ -27,12 +37,25 @@ static size_t child_idx_after_split(
     return child_idx;
 }
 
-static bool update_child_hint_cache(
-    size_t* child_hint_cache, size_t* child_hint_cache_index, size_t child_idx)
+/**
+ * @brief [TODO:description]
+ *
+ * @param child_hint_cache [TODO:parameter]
+ * @param child_hint_cache_index [TODO:parameter]
+ * @param child_idx [TODO:parameter]
+ * @param err_msg [TODO:parameter]
+ * @return [TODO:return]
+ */
+static bool update_child_hint_cache(size_t* child_hint_cache,
+    size_t* child_hint_cache_index,
+    size_t child_idx,
+    char** err_msg)
 {
     // Your b-tree is COLOSSAL.
     if (*child_hint_cache_index + 1 == DEFAULT_CHILD_IDX_CACHE_SIZE)
     {
+        *err_msg = "(update child hint cache) cached limit reached";
+
         return false;
     }
 
@@ -43,6 +66,13 @@ static bool update_child_hint_cache(
     return true;
 }
 
+/**
+ * @brief [TODO:description]
+ *
+ * @param node [TODO:parameter]
+ * @param stop_at [TODO:parameter]
+ * @param inc [TODO:parameter]
+ */
 static void update_subtree_sizes_upwards(
     BTreeNode* node, const BTreeNode* stop_at, const int inc)
 {
@@ -53,12 +83,25 @@ static void update_subtree_sizes_upwards(
     }
 }
 
+/**
+ * @brief TODO
+ *
+ * @param ptr [TODO:parameter]
+ * @param key [TODO:parameter]
+ * @param last_nonfull_anc_ptr [TODO:parameter]
+ * @param child_hint_cache [TODO:parameter]
+ * @param child_hint_cache_index_ptr [TODO:parameter]
+ * @param child_idx_ptr [TODO:parameter]
+ * @param err_msg [TODO:parameter]
+ * @return [TODO:return]
+ */
 bool compute_child_index_and_hint(BTreeNode* ptr,
     BTreeKey* key,
     BTreeNode** last_nonfull_anc_ptr,
     size_t* child_hint_cache,
     size_t* child_hint_cache_index_ptr,
-    size_t* child_idx_ptr)
+    size_t* child_idx_ptr,
+    char** err_msg)
 {
     // Unpack
     BTreeNode* last_nonfull_anc = *last_nonfull_anc_ptr;
@@ -88,12 +131,16 @@ bool compute_child_index_and_hint(BTreeNode* ptr,
 
     if (found_key)
     {
+        *err_msg =
+            "(compute next child index) found key in subtree assumed not to "
+            "contain key";
+
         return false;
     }
 
     // Your b-tree is COLOSSAL.
     if (!update_child_hint_cache(child_hint_cache, child_hint_cache_index_ptr,
-            child_idx_after_split_var))
+            child_idx_after_split_var, err_msg))
     {
         return false;
     }
@@ -128,6 +175,7 @@ bool compute_child_index_and_hint(BTreeNode* ptr,
  * `leaf`) that are full
  * @param[out] child_hint_cache path from last_nonfull_anc (or new root if all
  * ancestors are full) to the leaf where `key` will be inserted.
+ * @param[out] err_msg Error message populated on failure
  *
  * @return a return code
  *    - 0: Error
@@ -137,14 +185,15 @@ bool compute_child_index_and_hint(BTreeNode* ptr,
 bool btree_node_find_closest_nonfull_anc(BTreeNode* root,
     BTreeKey* key,
     BTreeNode** last_nonfull_anc_ptr,
-    size_t* child_hint_cache)
+    size_t* child_hint_cache,
+    char** err_msg)
 {
     size_t child_hint_cache_index = 0;
     // Always starts at zero because a new root is never split
     size_t child_idx = 0;
 
     if (!update_child_hint_cache(
-            child_hint_cache, &child_hint_cache_index, child_idx))
+            child_hint_cache, &child_hint_cache_index, child_idx, err_msg))
     {
         return false;
     }
@@ -156,7 +205,7 @@ bool btree_node_find_closest_nonfull_anc(BTreeNode* root,
     while (!btree_node_is_leaf(ptr))
     {
         if (!compute_child_index_and_hint(ptr, key, &last_nonfull_anc,
-                child_hint_cache, &child_hint_cache_index, &child_idx))
+                child_hint_cache, &child_hint_cache_index, &child_idx, err_msg))
         {
             return false;
         }
@@ -168,7 +217,7 @@ bool btree_node_find_closest_nonfull_anc(BTreeNode* root,
     // catches it.
 
     if (!compute_child_index_and_hint(ptr, key, &last_nonfull_anc,
-            child_hint_cache, &child_hint_cache_index, &child_idx))
+            child_hint_cache, &child_hint_cache_index, &child_idx, err_msg))
     {
         return false;
     }
@@ -180,7 +229,7 @@ bool btree_node_find_closest_nonfull_anc(BTreeNode* root,
 
 /**
  * @brief Splits a node (subroutine for `btree_node_insert_impl`)
- *
+ **
  * @detals `key` is being inserted into the subtree rooted at `node`. This
  * function splits `node`, storing the right half in the node `rsib_ptr` points
  * to and the separation key in `next_key_ptr`.
@@ -189,16 +238,18 @@ bool btree_node_find_closest_nonfull_anc(BTreeNode* root,
  *    - `node` is full
  *
  * @param[in] node Node being split
- * @param[out] rsib Second (right) node `node` is split into
- * @paran[out] next_key_ptr Points to the key `node` was split at
- * @paran[in] key Key we're inserting into the tree
- *
+ * @param[out] rsib_ptr Pointer to the second (right) node `node` is split into
+ * @param[out] next_key_ptr Pointer to the pivot key `node` is split about
+ * @param[out] err_msg Error message populated on failure
+ * *
  * @return A return code
  *    - 0: Error (OOM)
  *    - 1: OK
  */
-bool btree_node_split(
-    BTreeNode* node, BTreeNode** rsib_ptr, BTreeKey* next_key_ptr)
+bool btree_node_split(BTreeNode* node,
+    BTreeNode** rsib_ptr,
+    BTreeKey* next_key_ptr,
+    char** err_msg)
 {
     const size_t size = btree_node_node_size(node);
     // size of left sibling after the split
@@ -208,6 +259,8 @@ bool btree_node_split(
     BTreeNode* rsib;
     if (!btree_node_init(size, &rsib, !btree_node_is_leaf(node)))
     {
+        *err_msg = "(split) could not initialize new sibling";
+
         return 0;
     }
     *rsib_ptr = rsib;
@@ -274,9 +327,9 @@ bool btree_node_split(
 /**
  * @brief Inserts a key into a btree
  *
- * @details TODO
+ * @details Topdown insertion algorithm with lazy node splitting
  *
- * @par AlgorithmThe insertion algorithm is described below:
+ * @par The insertion algorithm is described below:
  *
  *    1. Find the leaf L whose range contains `key`.
  *    2. Find the first ancestor A of L that is not full, or create one if all
@@ -294,6 +347,7 @@ bool btree_node_split(
  * @param[in] root Root of a btree
  * @param[in] val Key to be inserted into the tree
  * @param[out] new_root_ptr Pointer to the root of the tree after `val` is
+ * @param[out] err_msg Error message populated on failure
  * inserted
  *
  * @return A return code
@@ -301,8 +355,8 @@ bool btree_node_split(
  *    - 1: OK
  *    - 2: `val` already exists in the subtree with root `root`
  */
-int btree_node_insert_impl(
-    BTreeNode* root, BTreeKey* key, BTreeNode** new_root_ptr)
+int btree_node_insert_topdown_lazy_impl(
+    BTreeNode* root, BTreeKey* key, BTreeNode** new_root_ptr, char** err_msg)
 {
     // By default, the root of the tree doesn't change
     *new_root_ptr = root;
@@ -316,7 +370,8 @@ int btree_node_insert_impl(
     size_t* child_hint_cache = CHILD_HINT_CACHE_MEM;
     BTreeNode* a             = NULL;
 
-    if (!btree_node_find_closest_nonfull_anc(root, key, &a, child_hint_cache))
+    if (!btree_node_find_closest_nonfull_anc(
+            root, key, &a, child_hint_cache, err_msg))
     {
         return 0;
     }
@@ -327,6 +382,12 @@ int btree_node_insert_impl(
     {
         if (!btree_node_init(btree_node_node_size(root), &a, 1))
         {
+            // TODO: Have we already edited the tree? Is this leaving the tree
+            // in an invalid state? We should mark this somehow if so, so it
+            // will be cleaned up on the next operation. If possible, we should
+            // clean it up here.
+            *err_msg = "could not initialize new root";
+
             return 0;
         }
 
@@ -348,7 +409,7 @@ int btree_node_insert_impl(
         BTreeNode* b2 = NULL;
         BTreeKey k;
 
-        if (!btree_node_split(b1, &b2, &k))
+        if (!btree_node_split(b1, &b2, &k, err_msg))
         {
             return 0;
         }
@@ -385,4 +446,89 @@ int btree_node_insert_impl(
     btree_node_insert_key(a, child_hint_cache[depth], key);
 
     return 1;
+}
+
+/**
+ * @brief Inserts a key into a btree
+ *
+ * @details Topdown insertion algorithm with non-lazy node splitting
+ *
+ * @par The insertion algorithm is described below:
+ *
+ * TODO: Explain the algorithm.
+ *
+ * @param[in] root Root of a btree
+ * @param[in] val Key to be inserted into the tree
+ * @param[out] new_root_ptr Pointer to the root of the tree after `val` is
+ * inserted
+ * @param[out] err_msg Error message populated on failure
+ *
+ * @return A return code
+ *    - 0: Error
+ *    - 1: OK
+ *    - 2: `val` already exists in the subtree with root `root`
+ */
+int btree_node_insert_topdown_nonlazy_impl(
+    BTreeNode* root, BTreeKey* key, BTreeNode** new_root_ptr, char** err_msg)
+{
+    *err_msg = "algorithm has not been implemented";
+
+    return 0;
+}
+
+/**
+ * @brief Inserts a key into a btree
+ *
+ * @details Bottup-up insertion algorithm
+ *
+ * @par The insertion algorithm is described below:
+ *
+ * TODO: Explain the algorithm.
+ *
+ * @param[in] root Root of a btree
+ * @param[in] val Key to be inserted into the tree
+ * @param[out] new_root_ptr Pointer to the root of the tree after `val` is
+ * inserted
+ * @param[out] err_msg Error message populated on failure
+ *
+ * @return A return code
+ *    - 0: Error
+ *    - 1: OK
+ *    - 2: `val` already exists in the subtree with root `root`
+ */
+int btree_node_insert_bottom_up_impl(
+    BTreeNode* root, BTreeKey* key, BTreeNode** new_root_ptr, char** err_msg)
+{
+    *err_msg = "algorithm has not been implemented";
+
+    return 0;
+}
+
+int btree_node_insert_impl(BTreeNode* root,
+    BTreeKey* key,
+    BTreeNode** new_root_ptr,
+    BTreeInsertionAlgorithm alg,
+    char** err_msg)
+{
+    if (alg == TopdownLazy)
+    {
+        return btree_node_insert_topdown_lazy_impl(
+            root, key, new_root_ptr, err_msg);
+    }
+    else if (alg == TopdownNonLazy)
+    {
+        return btree_node_insert_topdown_nonlazy_impl(
+            root, key, new_root_ptr, err_msg);
+    }
+    else if (alg == BottomUp)
+    {
+        return btree_node_insert_bottom_up_impl(
+            root, key, new_root_ptr, err_msg);
+    }
+    else
+    {
+        *err_msg = "undefined insertion algorithm";
+
+        return 0;
+    }
 }

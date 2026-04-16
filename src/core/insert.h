@@ -5,7 +5,17 @@
 
 typedef struct BTreeNode BTreeNode;
 
-int btree_node_insert_impl(
-    BTreeNode* root, BTreeKey* key, BTreeNode** new_root_ptr);
+typedef enum BTreeInsertionAlgorithm
+{
+    TopdownLazy,
+    TopdownNonLazy,
+    BottomUp,
+} BTreeInsertionAlgorithm;
+
+int btree_node_insert_impl(BTreeNode* root,
+    BTreeKey* key,
+    BTreeNode** new_root_ptr,
+    BTreeInsertionAlgorithm alg,
+    char** err_msg);
 
 #endif

@@ -193,13 +193,21 @@ int TestBTreeInsertCase(int* test_num,
         .size = sizeof(int),
     };
 
-    int rc = btree_insert(computed_tree, &key);
+    char* err_msg = NULL;
+
+    int rc        = btree_insert(computed_tree, &key, TopdownLazy, &err_msg);
 
     if (rc != exp_rc)
     {
         PrintFailureReason(*test_num, "return code", test_name);
         printf("Expected return code: %d\n", exp_rc);
         printf("Computed return code: %d\n", rc);
+
+        if (rc == 0)
+        {
+            printf("Error message: %s\n", err_msg != NULL ? err_msg : "NULL");
+        }
+
         return 1;
     }
 
