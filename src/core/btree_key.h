@@ -6,8 +6,14 @@
 typedef struct BTreeKey
 {
     size_t size;
-    char* data;
+    unsigned char* data;
 } BTreeKey;
+
+// to string
+typedef char* (*BTreeKeyToString)(BTreeKey*);
+
+// comparator
+typedef int (*BTreeKeyComparator)(BTreeKey*, BTreeKey*);
 
 int btree_key_cmp(BTreeKey* a, BTreeKey* b);
 

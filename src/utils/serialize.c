@@ -29,7 +29,7 @@ typedef enum TokenType
 typedef struct Token
 {
     TokenType type;
-    int val;
+    unsigned int val;
     bool is_intl;
 } Token;
 
@@ -79,8 +79,8 @@ static int StrFromTreeR(BTreeNode* root, StringBuilder* string)
         }
 
         // Extract integer from key
-        BTreeKey* key_to_append = btree_node_get_key(root, i);
-        int val_to_append       = 0;
+        BTreeKey* key_to_append    = btree_node_get_key(root, i);
+        unsigned int val_to_append = 0;
         assert(key_to_append->size == sizeof(int));
         memcpy(&val_to_append, key_to_append->data, sizeof(int));
 
@@ -357,16 +357,9 @@ bool tokenize_tree_str(const char* s,
 
             tok_seq_idx++;
         }
-        else if (isdigit(s[str_idx]) || s[str_idx] == '-')
+        else if (isdigit(s[str_idx]))
         {
-            int sign = 1;
-            if (s[str_idx] == '-')
-            {
-                sign = -1;
-                str_idx += 1;
-            }
-
-            int val = 0;
+            unsigned int val = 0;
 
             while (str_idx < len && isdigit(s[str_idx]))
             {
@@ -374,8 +367,6 @@ bool tokenize_tree_str(const char* s,
                 val += s[str_idx] - '0';
                 str_idx++;
             }
-
-            val *= sign;
 
             tok_seq[tok_seq_idx].type = NUMBER;
             tok_seq[tok_seq_idx].val  = val;
@@ -436,7 +427,7 @@ bool ProvideParseContext(Token* tok_seq,
         return false;
     }
 
-    int last_val           = INT_MIN;
+    unsigned int last_val  = 0;
 
     bool enforce_key_order = settings->lexer_settings->enforce_key_order;
 
@@ -473,7 +464,7 @@ bool ProvideParseContext(Token* tok_seq,
         else if (tok->type == NUMBER)
         {
             // Nothing to do for now.
-            int val = tok->val;
+            unsigned int val = tok->val;
             if (enforce_key_order && val < last_val)
             {
                 *err_msg_ptr = "Invalid key order";
@@ -559,9 +550,9 @@ int TreeFromStr(const char* str,
 
     for (int idx = 0; idx < n_tokens; idx++)
     {
-        TokenType type = tok_seq[idx].type;
-        int val        = tok_seq[idx].val;
-        is_intl        = tok_seq[idx].is_intl;
+        TokenType type   = tok_seq[idx].type;
+        unsigned int val = tok_seq[idx].val;
+        is_intl          = tok_seq[idx].is_intl;
 
         if (type == LPAREN)
         {
@@ -617,7 +608,7 @@ int TreeFromStr(const char* str,
 
             // TODO: KEY HANDLING
             BTreeKey key = {
-                .data = (char*)&val,
+                .data = (unsigned char*)&val,
                 .size = sizeof(int),
             };
 

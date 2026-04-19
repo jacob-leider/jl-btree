@@ -1,5 +1,7 @@
 #include <stddef.h>
 
+#include "btree_key.h"
+
 // @brief binary search algorithm
 //
 // @details The invariants of the loop are:
@@ -41,12 +43,12 @@ int binary_search(int* arr, size_t lo, size_t hi, int target)
     return lo;
 }
 
-int binary_search_2(char* arr,
+int binary_search_2(unsigned char* arr,
     size_t lo,
     size_t hi,
-    char* target,
+    unsigned char* target,
     size_t obj_size,
-    int (*cmp)(char*, char*))
+    int (*cmp)(unsigned char*, unsigned char*))
 {
     if (hi < lo) return 0;  // Not allowed
 
@@ -54,11 +56,40 @@ int binary_search_2(char* arr,
 
     while (lo < hi - 1)
     {
-        int mid       = (lo + hi) / 2;
+        int mid                = (lo + hi) / 2;
 
-        char* mid_obj = arr + mid * obj_size;
+        unsigned char* mid_obj = arr + mid * obj_size;
 
         if (cmp(target, mid_obj) < 0)
+        {
+            hi = mid;
+        }
+        else
+        {
+            lo = mid;
+        }
+    }
+
+    return lo;
+}
+
+int binary_search_3(BTreeKey* keys,
+    size_t lo,
+    size_t hi,
+    BTreeKey* target,
+    BTreeKeyComparator cmp)
+{
+    if (hi < lo) return 0;  // Not allowed
+
+    // Loop invariant: arr[lo] <= target < arr[hi]
+
+    while (lo < hi - 1)
+    {
+        int mid           = (lo + hi) / 2;
+
+        BTreeKey* mid_key = keys + mid;
+
+        if (cmp(target, mid_key) < 0)
         {
             hi = mid;
         }

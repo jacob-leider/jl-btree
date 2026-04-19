@@ -170,15 +170,16 @@ bool btree_node_write_key(BTreeNode* node, size_t idx, BTreeKey* key)
 {
     assert(idx < btree_node_node_size(node));
 
-    char* data     = key->data;
-    char* new_data = (char*)jl_btree_malloc(key->size * sizeof(char));
+    unsigned char* data = key->data;
+    unsigned char* new_data =
+        (unsigned char*)jl_btree_malloc(key->size * sizeof(unsigned char));
 
     if (new_data == NULL)
     {
         return false;
     }
 
-    memcpy(new_data, data, key->size * sizeof(char));
+    memcpy(new_data, data, key->size * sizeof(unsigned char));
 
     BTreeKey new_key = {
         .data = new_data,
@@ -317,11 +318,6 @@ void btree_node_get_sibs(const BTreeNode* node,
     }
 }
 
-int BTreeKey_cmp_wrapper(char* a, char* b)
-{
-    return btree_key_cmp((BTreeKey*)a, (BTreeKey*)b);
-}
-
 /**
  * @brief Computes the index of the least key in `node` ordered strictly after
  * `key`, and determine whether `node` contains `key`
@@ -371,8 +367,10 @@ size_t find_idx_of_min_key_greater_than_val(
     /*             The range of `node` DOES contain `key`             */
     /******************************************************************/
 
-    size_t idx = binary_search_2((char*)btree_node_keys(node), 0, num_keys,
-        (char*)key, sizeof(BTreeKey), BTreeKey_cmp_wrapper);
+    // TODO: take a comparator parameter and only use btree_key_cmp if it is
+    // null.
+    size_t idx =
+        binary_search_3(btree_node_keys(node), 0, num_keys, key, btree_key_cmp);
 
     // ATP, if `key` is equal to `node->keys[i]` for any `i` (including
     // `node->num_keys - 1`), then `idx` is equal to `i`.

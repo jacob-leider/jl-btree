@@ -20,7 +20,7 @@ typedef struct
 
 static PyObject* JlBTreeNode_num_children(JlBTreeNode* self);
 static PyObject* JlBTreeNode_num_keys(JlBTreeNode* self);
-static JlBTreeKeyInt* JlBTreeNode_get_key(JlBTreeNode* self, PyObject* args);
+static JlBTreeKey* JlBTreeNode_get_key(JlBTreeNode* self, PyObject* args);
 static JlBTreeNode* JlBTreeNode_get_child(JlBTreeNode* self, PyObject* args);
 static PyObject* JlBTreeNode_is_leaf(JlBTreeNode* self);
 static PyObject* JlBTreeNode_subtree_size(JlBTreeNode* self);
@@ -99,7 +99,7 @@ static PyObject* JlBTreeNode_subtree_size(JlBTreeNode* self)
     return PyLong_FromUnsignedLongLong(btree_node_subtree_size(node));
 }
 
-static JlBTreeKeyInt* JlBTreeNode_get_key(JlBTreeNode* self, PyObject* args)
+static JlBTreeKey* JlBTreeNode_get_key(JlBTreeNode* self, PyObject* args)
 {
     // For now, key is just an integer. TODO: Make this a python object.
     size_t index = 0;
@@ -121,8 +121,7 @@ static JlBTreeKeyInt* JlBTreeNode_get_key(JlBTreeNode* self, PyObject* args)
     }
 
     // Set up output object (wrapper)
-    JlBTreeKeyInt* out =
-        (JlBTreeKeyInt*)PyObject_New(JlBTreeKeyInt, &JlBTreeKeyIntType);
+    JlBTreeKey* out = (JlBTreeKey*)PyObject_New(JlBTreeKey, &JlBTreeKeyType);
 
     if (!out)
     {
@@ -133,9 +132,10 @@ static JlBTreeKeyInt* JlBTreeNode_get_key(JlBTreeNode* self, PyObject* args)
     /*                      REPLACE ME                     */
     /*******************************************************/
 
-    int val  = btree_node_get_key(node, index);
+    BTreeKey* key = btree_node_get_key(node, index);
 
-    out->val = val;
+    out->key.data = key->data;
+    out->key.size = key->size;
 
     /*******************************************************/
 

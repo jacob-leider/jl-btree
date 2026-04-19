@@ -42,32 +42,34 @@ static void JlBTree_dealloc(JlBTree* self)
 
 static PyObject* JlBTree_insert(JlBTree* self, PyObject* args)
 {
-    // For now, key is just an integer. TODO: Make this a python object.
-    BTreeKey key = 0;
+    JlBTreeKey* key_obj = NULL;
+
+    printf("Test 1\n");
 
     // Unpack: "i" format string means one integer
-    if (!PyArg_ParseTuple(args, "i", &key))
+    if (!PyArg_ParseTuple(args, "O", &key_obj))
     {
         return NULL;
     }
 
-    int rc = btree_insert(self->tree, key);
+    char* err_msg = NULL;
+
+    int rc = btree_insert(self->tree, &(key_obj->key), TopdownLazy, &err_msg);
 
     return PyLong_FromInt32(rc);
 }
 
 static PyObject* JlBTree_delete(JlBTree* self, PyObject* args)
 {
-    // For now, key is just an integer. TODO: Make this a python object.
-    BTreeKey key = 0;
+    JlBTreeKey* key_obj = NULL;
 
     // Unpack: "i" format string means one integer
-    if (!PyArg_ParseTuple(args, "i", &key))
+    if (!PyArg_ParseTuple(args, "O", &key_obj))
     {
         return NULL;
     }
 
-    int rc = btree_delete(self->tree, key);
+    int rc = btree_delete(self->tree, &(key_obj->key));
 
     return PyLong_FromInt32(rc);
 }

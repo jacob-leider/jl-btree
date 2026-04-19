@@ -32,17 +32,17 @@ PyMODINIT_FUNC PyInit_jl_btree(void)
     PyObject* m;
 
     if (PyType_Ready(&JlBTreeType) < 0) return NULL;
-    if (PyType_Ready(&JlBTreeKeyIntType) < 0) return NULL;
+    if (PyType_Ready(&JlBTreeKeyType) < 0) return NULL;
     if (PyType_Ready(&JlBTreeNodeType) < 0) return NULL;
 
     m = PyModule_Create(&jl_btree_module);
 
     Py_INCREF(&JlBTreeType);
-    Py_INCREF(&JlBTreeKeyIntType);
+    Py_INCREF(&JlBTreeKeyType);
     Py_INCREF(&JlBTreeNodeType);
 
     PyModule_AddObject(m, "JlBTree", (PyObject*)&JlBTreeType);
-    PyModule_AddObject(m, "JlBTreeKeyInt", (PyObject*)&JlBTreeKeyIntType);
+    PyModule_AddObject(m, "JlBTreeKey", (PyObject*)&JlBTreeKeyType);
     PyModule_AddObject(m, "JlBTreeNode", (PyObject*)&JlBTreeNodeType);
 
     return m;
