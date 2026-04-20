@@ -82,7 +82,7 @@ bool string_builder_inc_size(StringBuilder* s, size_t inc)
     return s->str != NULL;
 }
 
-bool string_builder_append(
+bool string_builder_append_string(
     StringBuilder* s, const char* other, size_t other_size)
 {
     if (s->len + other_size > s->cap)
@@ -100,9 +100,26 @@ bool string_builder_append(
     return true;
 }
 
+bool string_builder_append_string_slice(StringBuilder* s, StringSlice* t)
+{
+    if (s->len + t->len > s->cap)
+    {
+        if (!string_builder_inc_size(s, t->len))
+        {
+            return false;
+        }
+    }
+
+    memcpy(s->str + s->len, t->str, t->len);
+
+    s->len += t->len;
+
+    return true;
+}
+
 bool string_builder_append_willy_nilly(StringBuilder* s, const char* other)
 {
-    return string_builder_append(s, other, strlen(other));
+    return string_builder_append_string(s, other, strlen(other));
 }
 
 char* string_builder_to_c_string(StringBuilder* s)
@@ -130,5 +147,5 @@ bool string_builder_append_int(StringBuilder* s, int n)
 
     sprintf(buff, "%d", n);
 
-    return string_builder_append(s, buff, strlen(buff));
+    return string_builder_append_string(s, buff, strlen(buff));
 }

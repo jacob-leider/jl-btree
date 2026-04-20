@@ -189,7 +189,7 @@ int TestBTreeInsertCase(int* test_num,
     // =======================
 
     BTreeKey key = {
-        .data = (char*)&val,
+        .data = (unsigned char*)&val,
         .size = sizeof(int),
     };
 
@@ -541,7 +541,7 @@ int TestBTreeDeleteCase(int* test_num,
     // ======================
 
     BTreeKey key = {
-        .data = (char*)&val,
+        .data = (unsigned char*)&val,
         .size = sizeof(int),
     };
 

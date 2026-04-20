@@ -23,4 +23,6 @@ int btree_key_eq(BTreeKey* a, BTreeKey* b);
 int btree_key_le(BTreeKey* a, BTreeKey* b);
 int btree_key_ge(BTreeKey* a, BTreeKey* b);
 
+char* btree_key_escape_data(BTreeKey* key);
+
 #endif

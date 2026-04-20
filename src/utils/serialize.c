@@ -11,9 +11,11 @@
 #include "./btree_print.h"
 #include "./core/btree.h"
 #include "./core/btree_node.h"
+#include "./core/mem.h"
 #include "./printutils.h"
 #include "./stack.h"
 #include "./string_slice.h"
+#include "./string_utils.h"
 
 static int max(int a, int b) { return a <= b ? b : a; }
 
@@ -54,8 +56,59 @@ LexerSettings* default_lexer_settings(void)
 /*                             SERIALIZE                                */
 /************************************************************************/
 
+// Default = convert to hex string
+static char* default_serialize_key(BTreeKey* key, size_t* len)
+{
+    assert(key != NULL);
+
+    if (key->size == 0)
+    {
+        return "null";
+    }
+
+    assert(key->data != NULL);
+
+    // See data_2_hex_str
+    *len = 2 * key->size;
+
+    return data_2_hex_str(key->data, key->size);
+}
+
+// Need to free slice->str
+static bool serialize_key_wrapper(BTreeKey* key,
+    StringSlice* slice,
+    char* (*serialize_key)(BTreeKey*, size_t*))
+{
+    size_t len = 0;
+
+    // TODO
+    char* str = serialize_key(key, &len);
+
+    if (key == NULL)
+    {
+        return false;
+    }
+
+    slice->str = str;
+    slice->len = len;
+
+    return true;
+}
+
+static void serialize_key_wrapper_cleanup(StringSlice* slice)
+{
+    if (slice->str != NULL)
+    {
+        free(slice->str);
+    }
+
+    memset(slice, 0, sizeof(StringSlice));
+}
+
 // Helper for `StrFromTree`
-static int StrFromTreeR(BTreeNode* root, StringBuilder* string)
+static int StrFromTreeR(BTreeNode* root,
+    StringBuilder* string,
+    char* (*serialize_key)(BTreeKey*, size_t*))
 {
     if (!string_builder_append_willy_nilly(string, "(")) return 0;
 
@@ -67,7 +120,7 @@ static int StrFromTreeR(BTreeNode* root, StringBuilder* string)
 
             assert(child != NULL);
 
-            if (!StrFromTreeR(child, string))
+            if (!StrFromTreeR(child, string, serialize_key))
             {
                 return 0;
             }
@@ -79,15 +132,22 @@ static int StrFromTreeR(BTreeNode* root, StringBuilder* string)
         }
 
         // Extract integer from key
-        BTreeKey* key_to_append    = btree_node_get_key(root, i);
-        unsigned int val_to_append = 0;
-        assert(key_to_append->size == sizeof(int));
-        memcpy(&val_to_append, key_to_append->data, sizeof(int));
+        BTreeKey* key_to_append = btree_node_get_key(root, i);
 
-        if (!string_builder_append_int(string, val_to_append))
+        StringSlice slice_to_append;
+
+        if (!serialize_key_wrapper(
+                key_to_append, &slice_to_append, serialize_key))
         {
             return 0;
         }
+
+        if (!string_builder_append_string_slice(string, &slice_to_append))
+        {
+            return 0;
+        }
+
+        serialize_key_wrapper_cleanup(&slice_to_append);
 
         if (i < btree_node_num_keys(root) - 1 || !btree_node_is_leaf(root))
         {
@@ -104,7 +164,7 @@ static int StrFromTreeR(BTreeNode* root, StringBuilder* string)
 
         assert(child != NULL);
 
-        if (!StrFromTreeR(child, string)) return 0;
+        if (!StrFromTreeR(child, string, serialize_key)) return 0;
     }
 
     if (!string_builder_append_willy_nilly(string, ")")) return 0;
@@ -115,11 +175,13 @@ static int StrFromTreeR(BTreeNode* root, StringBuilder* string)
 /**
  * @brief Serialize a btree
  *
- * @param root
+ * @param tree A btree
+ * @param serialize_key Delegate that computes a string representation of a
+ * btree key
  *
  * @return 1 on success, 0 on failure
  */
-char* StrFromTree(BTree* tree)
+char* StrFromTree(BTree* tree, char* (*serialize_key)(BTreeKey*, size_t*))
 {
     BTreeNode* root  = tree->root;
 
@@ -130,7 +192,12 @@ char* StrFromTree(BTree* tree)
         return NULL;
     }
 
-    if (!StrFromTreeR(root, s))
+    if (serialize_key == NULL)
+    {
+        serialize_key = default_serialize_key;
+    }
+
+    if (!StrFromTreeR(root, s, serialize_key))
     {
         printf("failed to serialize tree\n");
 

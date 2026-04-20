@@ -29,8 +29,10 @@ bool string_slice_equal(const StringSlice* a, const StringSlice* b);
 
 bool string_builder_inc_size(StringBuilder* s, size_t inc);
 
-bool string_builder_append(
+bool string_builder_append_string(
     StringBuilder* s, const char* other, size_t other_size);
+
+bool string_builder_append_string_slice(StringBuilder* s, StringSlice* t);
 
 // Dangerous
 bool string_builder_append_willy_nilly(StringBuilder* s, const char* other);

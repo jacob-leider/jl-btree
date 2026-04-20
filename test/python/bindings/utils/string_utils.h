@@ -3,6 +3,8 @@
 
 #include <stdlib.h>
 
+#include "../../../../src/utils/string_slice.h"
+
 static char first_nibble_2_hex(unsigned char nibble)
 {
     // Assume nibble < 16
