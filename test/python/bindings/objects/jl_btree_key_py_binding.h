@@ -1,4 +1,24 @@
 
+/// @author Jacob Leider
+///
+/// Unlike JlBTreeNodes, JlBTreeKeys are NEVER references. When a key is written
+/// to a BTreeNode, the key's data is copied to a memory segment owned by that
+/// BTreeNode. Therefore the data that a BTreeKey points to should ONLY be freed
+/// by that BTreeNode.
+///
+/// A JlBTreeKey is essentially a snapshot of the program state at the moment of
+/// that JlBTreeKey's initialization. Since the key it referenced at that moment
+/// may be changed or deallocated, the data must be copied. This pattern
+/// obviously doesn't work for a BTreeNode because BTreeNodes both HAVE
+/// dependencies and ARE dependencies (they are internal nodes of the BTree's
+/// dependency graph). BTreeKeys are the "sinks" of the BTree's dependency
+/// graph.
+///
+/// What if we just want to READ an existing key's data? Seems like we shouldn't
+/// need to copy the key.
+///
+///     TODO: Create a JlBTreeKeyReference object
+
 #include <Python.h>
 
 #include "../../../../src/core/btree.h"
@@ -13,12 +33,60 @@ typedef struct
     BTreeKey key;
 } JlBTreeKey;
 
+static void JlBTreeKey_dealloc(JlBTreeKey* self);
+static int JlBTreeKey_init(PyObject* op, PyObject* args, PyObject* kwds);
+static PyObject* JlBTreeKey_repr(PyObject* op);
+static PyObject* JlBTreeKey_as_bytes(JlBTreeKey* self);
+
+// JlBtree object scope method definition table
+static PyMethodDef JlBTreeKey_methods[] = {
+    {"as_bytes", (PyCFunction)JlBTreeKey_as_bytes, METH_NOARGS, ""  },
+    {NULL,       NULL,                             0,           NULL}  /* Sentinel */
+};
+
+PyTypeObject JlBTreeKeyType = {
+    PyVarObject_HEAD_INIT(NULL, 0).tp_name = "jl_btree.JlBTreeKey",
+    .tp_basicsize                          = sizeof(JlBTreeKey),
+    .tp_flags   = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE,
+    .tp_alloc   = PyType_GenericAlloc,
+    .tp_init    = (initproc)JlBTreeKey_init,
+    .tp_new     = PyType_GenericNew,
+    .tp_dealloc = (destructor)JlBTreeKey_dealloc,
+    .tp_repr    = JlBTreeKey_repr,
+    .tp_methods = JlBTreeKey_methods,
+};
+
+JlBTreeKey* key_reference(BTreeKey* key)
+{
+    JlBTreeKey* out = (JlBTreeKey*)PyObject_New(JlBTreeKey, &JlBTreeKeyType);
+
+    if (out == NULL)
+    {
+        return NULL;
+    }
+
+    unsigned char* data_copy =
+        (unsigned char*)PyMem_Malloc(key->size * sizeof(unsigned char));
+
+    if (data_copy == NULL)
+    {
+        return NULL;
+    }
+
+    memcpy(data_copy, key->data, key->size);
+
+    out->key.data = data_copy;
+    out->key.size = key->size;
+
+    return out;
+}
+
 static void JlBTreeKey_dealloc(JlBTreeKey* self)
 {
     // 1. Free your custom C-level memory
-    if (self->key.data)
+    if (self->key.data != NULL)
     {
-        free(self->key.data);
+        PyMem_Free(self->key.data);
     }
 
     // 2. Call the default deallocator for the Python object itself
@@ -100,7 +168,7 @@ static int get_key_size_and_data(
         return -1;
     }
 
-    key_data = (char*)malloc(key_size);
+    key_data = (unsigned char*)PyMem_Malloc(key_size);
 
     if (key_data == NULL)
     {
@@ -141,21 +209,14 @@ static int JlBTreeKey_init(PyObject* op, PyObject* args, PyObject* kwds)
     return 0;
 }
 
-// JlBtree object scope method definition table
-static PyMethodDef JlBTreeKey_methods[] = {
-    {NULL, NULL, 0, NULL}  /* Sentinel */
-};
+static PyObject* JlBTreeKey_as_bytes(JlBTreeKey* self)
+{
+    if (self->key.data == NULL)
+    {
+        return NULL;
+    }
 
-PyTypeObject JlBTreeKeyType = {
-    PyVarObject_HEAD_INIT(NULL, 0).tp_name = "jl_btree.JlBTreeKey",
-    .tp_basicsize                          = sizeof(JlBTreeKey),
-    .tp_flags   = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE,
-    .tp_alloc   = PyType_GenericAlloc,
-    .tp_init    = (initproc)JlBTreeKey_init,
-    .tp_new     = PyType_GenericNew,
-    .tp_dealloc = (destructor)JlBTreeKey_dealloc,
-    .tp_repr    = JlBTreeKey_repr,
-    .tp_methods = JlBTreeKey_methods,
-};
+    return PyByteArray_FromStringAndSize(self->key.data, self->key.size);
+}
 
 #endif

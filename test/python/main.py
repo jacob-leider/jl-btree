@@ -12,29 +12,55 @@ def traverse(node, depth=0):
         traverse(node.get_child(i), depth + 1)
 
 
+def test_btree_node_set_key():
+    print("Testing BTreeNode set_key...")
+
+    node = jl_btree.JlBTreeNode(False)
+    k = jl_btree.JlBTreeKey(42)
+    node.set_key(0, k)
+
+
+def test_btree_node_set_child():
+    print("Testing BTreeNode set_child...")
+
+    a = jl_btree.JlBTreeNode(True)
+    b = jl_btree.JlBTreeNode(False)
+    k = jl_btree.JlBTreeKey(42)
+
+    b.set_key(0, k)
+    b.set_num_keys(1)
+
+    a.set_child(0, b)
+    a.set_num_children(1)
+
+    k2 = a.get_child(0).get_key(0)
+
+    print(
+        f"Retrieved key from child: {k2}")
+    print(f"As bytes: {k2.as_bytes()}")
+
+
+def test_btree_insert_key():
+    print("Testing BTree insert_key...")
+
+    obj = jl_btree.JlBTree()
+    k = jl_btree.JlBTreeKey(42)
+
+    assert obj.insert(k) == 1
+    assert obj.insert(k) == 2
+
+    del obj
+
+
 if __name__ == "__main__":
 
     print("Hello from Python!")
     print(jl_btree.say_hello())
 
+    test_btree_node_set_key()
+    test_btree_node_set_child()
+    test_btree_insert_key()
+
     obj = jl_btree.JlBTree()
-
-    for i in range(100):
-        k = jl_btree.JlBTreeKey(i)
-        print(f"Inserting {i} into the B-tree: ",
-              obj.insert(k))
-
-    # Mess with keys
-    root = obj.get_root()
-
-    traverse(root)
-
-    print("Root node number of keys: ", root.num_keys())
-    print("Root node number of children: ", root.num_children())
-
-    print("Result of deletion (tree does not contain element): ",
-          obj.delete(jl_btree.JlBTreeKey(42)))
-    print("Result of deletion (tree contains element): ",
-          obj.delete(jl_btree.JlBTreeKey(41)))
 
     del obj

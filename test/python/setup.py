@@ -27,4 +27,5 @@ if __name__ == "__main__":
         version="1.0",
         description="A starter C extension for Python",
         ext_modules=[module],
+        extra_compile_args=['-g', '-O0']
     )

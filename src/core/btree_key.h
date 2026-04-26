@@ -18,9 +18,13 @@ typedef int (*BTreeKeyComparator)(BTreeKey*, BTreeKey*);
 int btree_key_cmp(BTreeKey* a, BTreeKey* b);
 
 int btree_key_lt(BTreeKey* a, BTreeKey* b);
+
 int btree_key_gt(BTreeKey* a, BTreeKey* b);
+
 int btree_key_eq(BTreeKey* a, BTreeKey* b);
+
 int btree_key_le(BTreeKey* a, BTreeKey* b);
+
 int btree_key_ge(BTreeKey* a, BTreeKey* b);
 
 char* btree_key_escape_data(BTreeKey* key);

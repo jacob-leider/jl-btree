@@ -661,7 +661,6 @@ int TestBTreeDelete(void)
                 test_name, size, before, val, after, exp_rc))
             return TestDidntExecute(test_num);
     }
-
     // Case 5: Two leaves get merged
     {
         const char* test_name = "leaves merged";
